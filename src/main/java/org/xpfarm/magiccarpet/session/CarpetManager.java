@@ -255,6 +255,22 @@ public final class CarpetManager {
         endSession(player, session, cause);
     }
 
+    /**
+     * Whether {@code player} currently has an active carpet flight session.
+     *
+     * <p>Added for task 8's {@code /carpet off}, which needs to tell a rider with nothing to
+     * stow ("you have no active carpet") apart from an actual dismiss ("your carpet has been
+     * stowed") — {@link #dismiss} is {@code void} and intentionally silent for the no-session
+     * case, so it cannot answer that question on its own. Purely additive: does not change the
+     * signature or behaviour of any existing method.
+     */
+    public boolean isFlying(Player player) {
+        if (player == null) {
+            return false;
+        }
+        return sessions.containsKey(player.getUniqueId());
+    }
+
     private void endSession(Player player, CarpetSession session, DismissCause cause) {
         session.mode().dismiss(player); // never throws; idempotent for both modes
         try {
