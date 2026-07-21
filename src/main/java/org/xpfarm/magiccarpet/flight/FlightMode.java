@@ -35,12 +35,22 @@ public interface FlightMode {
      * @return the spawned mount entity for {@link SeatedFlightMode}, or {@code null} for
      *     {@link StandingFlightMode}, which has no mount. Callers must handle a {@code null}
      *     return.
-     * @throws IllegalStateException if {@code player} already has an active session with this
-     *     mode instance and was not {@link #dismiss}ed first, or (in {@link SeatedFlightMode}
-     *     only) if the mount rejects the player as a passenger. Callers must not assume deploy
-     *     always succeeds silently; a caught exception means no session was started and (for
-     *     {@link SeatedFlightMode}) any entity spawned during the attempt has already been
-     *     cleaned up.
+     * @throws IllegalStateException if {@code player} already has a tracked session with this
+     *     mode instance that {@link #dismiss} has not cleared. The exact tracking condition
+     *     differs by mode: {@link StandingFlightMode} throws whenever any entry for the player
+     *     remains in its internal map — {@code dismiss} clears that entry unconditionally,
+     *     before it even attempts to restore the player's flight flags, so a lingering entry
+     *     can only mean {@code dismiss} was never called, not that it failed. {@link
+     *     SeatedFlightMode} throws only when a previously tracked mount is both present
+     *     <em>and</em> still alive/valid; a tracked-but-dead mount (e.g. removed by a world
+     *     unload) does not throw and is silently replaced. {@link SeatedFlightMode} additionally
+     *     throws if the newly spawned mount rejects the player as a passenger. Callers must not
+     *     assume deploy always succeeds silently: a caught exception means no session was
+     *     started and (for {@link SeatedFlightMode}) any entity spawned during the attempt has
+     *     already been cleaned up. Note the throw can fire on a call that looks like a fresh
+     *     deploy from the caller's perspective — e.g. calling {@code deploy} twice in a row for
+     *     the same player without an intervening {@code dismiss} — it is not limited to
+     *     obviously-repeated calls.
      */
     Entity deploy(Player player, Location at);
 

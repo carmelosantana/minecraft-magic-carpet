@@ -83,21 +83,27 @@ public final class StandingFlightMode implements FlightMode {
      * offline, already dismissed, or was never deployed through this instance — all such
      * calls are no-ops.
      *
-     * <p>The recorded state is discarded only after {@code setFlying}/{@code setAllowFlight}
-     * both complete without throwing. If either throws (e.g. the player object is no longer
-     * valid), the tracked entry is left intact so a later retry — once the player is reachable
-     * again — can still restore it, rather than silently discarding state that was never
-     * actually applied. This mirrors {@link SeatedFlightMode#dismiss}'s
-     * {@code try/catch (RuntimeException ignored)} guard for the identical "must not throw for
-     * an offline player" contract both modes share.
+     * <p>The tracked entry is removed <strong>first</strong>, unconditionally, before the
+     * restore is even attempted — matching {@link SeatedFlightMode#dismiss}, which calls
+     * {@code mounts.remove(id)} before its own guarded cleanup. This is a deliberate reversal
+     * of an earlier version of this method, which removed the entry only after a successful
+     * restore and left it in place on failure so "a later retry" could pick it up. That earlier
+     * behaviour was itself the bug: no retry mechanism exists anywhere in this codebase to
+     * consume a retained entry, but {@link #deploy} unconditionally rejects any UUID still
+     * present in {@link #priorStates}. So a single transient {@code RuntimeException} from
+     * {@code setFlying}/{@code setAllowFlight} — offline player, plugin conflict, anything
+     * transient — permanently wedged that UUID: every future {@code deploy()} call for it threw
+     * forever, with no self-healing path. Removing the entry first bounds the failure instead:
+     * a restore that throws is now a best-effort miss on one player's flight flags for this one
+     * dismiss, not a permanent denial of the feature. Do not reintroduce the "keep the entry for
+     * a retry" behaviour without also building a retry mechanism to use it.
      */
     @Override
     public void dismiss(Player player) {
         if (player == null) {
             return;
         }
-        UUID id = player.getUniqueId();
-        PriorFlightState prior = priorStates.get(id);
+        PriorFlightState prior = priorStates.remove(player.getUniqueId());
         if (prior == null) {
             return;
         }
@@ -105,11 +111,10 @@ public final class StandingFlightMode implements FlightMode {
             player.setFlying(prior.flying());
             player.setAllowFlight(prior.allowFlight());
         } catch (RuntimeException ignored) {
-            // Best-effort restore: the player may be offline or otherwise unreachable. Leave
-            // the recorded state intact so a later retry can still restore it.
-            return;
+            // Best-effort restore only: the entry above is already gone, so this failure cannot
+            // wedge future deploy() calls for this player. See method Javadoc for why the entry
+            // is removed before the restore is attempted rather than after it succeeds.
         }
-        priorStates.remove(id);
     }
 
     private record PriorFlightState(boolean allowFlight, boolean flying) {}
