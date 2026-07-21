@@ -39,8 +39,8 @@ public final class CarpetSession {
     /**
      * @param playerId the rider's UUID
      * @param mode the {@link FlightMode} strategy driving this session
-     * @param mount the mount entity {@code mode.deploy} returned, or {@code null} for a mode
-     *     with no mount (e.g. {@code StandingFlightMode})
+     * @param mount the mount or visual-anchor entity {@code mode.deploy} returned; non-null for
+     *     every session that actually reaches registration (see {@link #mount()})
      * @param visual the dual carpet visual attached to whichever entity is carrying it
      * @param fuelTank this player's fuel gauge; the same instance CarpetManager keeps in its
      *     per-player map beyond this session's lifetime
@@ -70,7 +70,14 @@ public final class CarpetSession {
         return mode;
     }
 
-    /** The mount entity, or {@code null} if this session's mode has no mount. */
+    /**
+     * The mount or visual-anchor entity {@code mode.deploy} returned for this session. Non-null
+     * for every registered session: both {@code SeatedFlightMode} and {@code StandingFlightMode}
+     * always supply an entity to attach the {@link CarpetVisual}'s passengers to (see {@code
+     * FlightMode#deploy}'s Javadoc — it returns {@code null} only in the shared degenerate case
+     * where the deploy location has no {@link org.bukkit.World}, and that case never reaches
+     * session registration, so it can never appear here).
+     */
     public Entity mount() {
         return mount;
     }
