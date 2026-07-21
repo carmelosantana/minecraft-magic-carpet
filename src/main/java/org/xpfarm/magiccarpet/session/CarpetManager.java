@@ -422,8 +422,22 @@ public final class CarpetManager {
         UUID id = player.getUniqueId();
         teardownInProgress.add(id);
         try {
-            session.mode().dismiss(player); // never throws; idempotent for both modes
+            session.mode().dismiss(player); // documented not to throw, but caught below regardless
+        } catch (RuntimeException e) {
+            // session was already removed from `sessions` by the caller (dismiss()/tick()/
+            // shutdownAll()) before endSession runs, so this session's CarpetSession — and the
+            // player's rug ItemStack it alone holds — has no other owner. Letting this exception
+            // propagate would skip visual.remove() and returnRug() below, leaking the visual
+            // entities and destroying the rug outright rather than merely losing track of a
+            // mount. Log and fall through instead so both still run.
+            plugin.getLogger().log(Level.WARNING,
+                    "Failed to dismiss carpet flight mode for " + player.getName()
+                            + " while dismissing (" + cause + "); continuing teardown", e);
         } finally {
+            // Cleared here unconditionally (success, caught exception, or any other path out of
+            // this try) so a thrown dismiss() can never leave this flag stuck — see this flag's
+            // Javadoc for why a stuck flag would make every later dismount for this player
+            // permanently uncancellable.
             teardownInProgress.remove(id);
         }
         try {
@@ -464,13 +478,17 @@ public final class CarpetManager {
      * tried to hand the rug back for a {@code DEATH} dismiss, the rug would be given out twice
      * (once here, once by the listener) for every death.
      *
-     * <p><strong>{@link DismissCause#QUIT} never writes to the inventory.</strong> A player is
-     * disconnecting; rather than risk an inventory mutation racing the client's disconnect (or
-     * simply not persisting cleanly), the rug is dropped into the world at their last location
-     * instead — the same fallback used below for "something else is already in the off-hand".
-     * Every other cause writes to the off-hand when it is empty, and falls back to a world drop
-     * when it is not (a rider who swapped something else into their off-hand mid-flight keeps
-     * that item; their rug lands at their feet rather than overwriting it or vanishing).
+     * <p><strong>{@link DismissCause#QUIT} writes to the off-hand like every other cause.</strong>
+     * CraftBukkit's {@code PlayerList.remove()} fires {@code PlayerQuitEvent} and only afterward
+     * calls {@code save(entityplayer)}, so an inventory write made while handling the quit event
+     * (which is where this whole dismiss chain runs from) persists in the save that follows — the
+     * same basis every save-inventory-on-quit plugin relies on. The off-hand is also guaranteed
+     * empty at this point: {@link #deploy} set it to {@code AIR} when it took the rug, and nothing
+     * else can have put something else there for a player who is disconnecting. So
+     * {@code setItemInOffHand} below cannot overwrite anything for this cause, and there is no
+     * reason to fall back to a world drop — which would otherwise cost the rug to despawn timers,
+     * the void, lava, or a bystander picking it up, for what is the single most common abnormal
+     * end of a flight.
      */
     private void returnRug(Player player, CarpetSession session, DismissCause cause) {
         ItemStack rug = session.heldRug();
@@ -481,10 +499,6 @@ public final class CarpetManager {
             return; // CarpetListeners.onPlayerDeath handles this cause itself; see method doc.
         }
         try {
-            if (cause == DismissCause.QUIT) {
-                dropRugAtFeet(player, rug);
-                return;
-            }
             ItemStack offHand = player.getInventory().getItemInOffHand();
             if (offHand == null || offHand.getType() == Material.AIR) {
                 player.getInventory().setItemInOffHand(rug);
