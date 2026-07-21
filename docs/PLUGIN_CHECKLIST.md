@@ -124,6 +124,29 @@ blockers for a meaningful gate 7a Bedrock test):
 - ~~**Geyser version mismatch.**~~ **Not a break — resolved `2026-07-21`, no action taken.** The protocol gap is real (Geyser 2.11.0-b1200's codec is `protocolVersion(776).minecraftVersion("26.2")`; Paper 26.1.2 is 775) but it does not break Bedrock, and **neither remediation was applied**. ViaVersion is Geyser's own designed mechanism for this: `GeyserSpigotVersionChecker.checkForSupportedProtocol` delegates entirely to ViaVersion when present and never compares protocols itself, and Geyser's own message tells you to *"install ViaVersion"* when it is absent. ViaVersion 5.11.0 registers both `775 -> "26.1-26.1.2"` and `776 -> "26.2"`, so the check passes; `use-direct-connection: true` also means no Java handshake is negotiated over a socket. Two stacks booted clean on this combination with zero exceptions and none of Geyser's ViaVersion warnings, and production answers a Bedrock RakNet ping. Three claims in the original note were wrong: 2.11.0 explicitly declares 26.1.1/26.1.2; `getJavaVersions()` is `List.of(codec.getMinecraftVersion(), "26.1.1", "26.1.2")` — a dynamic first element plus a maintained down-level list, not a stale string; and the `26.x` values in `GameProtocol` are **Bedrock** versions (codecs `v924`–`v1001`), which is likely what was misread as a Java 26.2. Full write-up in the toolkit's `CURRENT_STATE.md`. **Gate 7a Bedrock testing is unblocked.**
 - ~~**Toolkit template `api-version`.**~~ **Resolved `2026-07-21`** — the template, `PLUGIN_LIFECYCLE.md` §4, and the `ecosystem`/`dev`/`scaffold` skills now specify `'26.1'`. Two details in the original note were wrong when checked against Paper 26.1.2 build 74 directly: the accepted upper bound is `26.1.2` (`apiVersioning.json`'s `currentApiVersion`), not `26.2`, so `'26.2'` would be *rejected*; and there is **no** `Slime`→`AbstractCubeMob` rewrite on this build — no such type exists in the API, `Commodore` has no `Slime` entry, and `MagmaCube extends Slime` still holds. The `Cow`→`AbstractCow` rewrite is real, gated at `ApiVersion.ABSTRACT_COW` = `1.21.5`.
 
+### Post-implementation limitations (added 2026-07-21 after the whole-branch review)
+
+**Accepted in code — deliberately not fixed now:**
+
+- **Collision is destination-only, so high speeds tunnel.** `SeatedFlightMode.isBlocked` checks one block at the destination. At the config maximum `flight.speed: 2.0` the mount steps 2 blocks per tick and passes through any wall ≤1 block thick. Sound at the 0.5 default; the guarantee weakens as `flight.speed` rises.
+- **A mount already inside a solid block would freeze.** Not reachable by any in-plugin path (deploy spawns at the player's air position; the altitude clamp targets open air). The rider escapes by looking up and holding jump. One-line mitigation if it ever bites: also permit the move when the mount's *current* block is solid.
+- **The altitude ceiling is effectively disabled under solid overheads.** `terrainHeightAt` uses `World.getHighestBlockAt`, which returns the Nether's bedrock roof (~Y 127), an overhang, or a cave ceiling. Permissive rather than dangerous — the clamp only teleports downward.
+- **`clampAltitude`'s floor half is inert.** `applyAltitudeCeiling` only teleports when `clampedY < current.getBlockY()`, and `Math.max(groundY, …)` can only raise it. Harmless.
+- **The viewer refresh is gated on the global tick**, so every active session refreshes on the same tick — a synchronised spike. Fine at realistic rider counts; stagger by `playerId.hashCode()` if that changes.
+- **`WorldGuardRegionQuery.flightAllowed` swallows every exception with no logging, ever.** Fail-open is right, but with zero diagnostics a WorldGuard API move silently turns region checking into a permanent no-op. A log-once-then-suppress flag would make it diagnosable.
+- Minor hygiene: null-guard asymmetry on the off-hand read; `FuelTank.refill()` dead in main; three write-only fields in `MagicCarpetPlugin`; `FlightGuardTest` builds the 14-component config positionally; `getRaw` called twice on the config warning path; an int key holding a non-integer that truncates to exactly the default warns silently; duplicate `"carpet"` literal for two different registries; `CarpetItem.create()` uses `getItemMeta()` unguarded.
+
+**Stale comments to correct eventually:** `returnRug`'s Javadoc claims the off-hand is "guaranteed empty" for `QUIT` (a rider can swap an item in mid-flight — the code handles it, the comment is wrong); `CarpetManager` and `CarpetSession.mount()` assert the null-mount case "never reaches session registration" when it is only prevented incidentally by `CarpetVisual` NPE-ing.
+
+**Design and configuration caveats:**
+
+- **`flight.speed` applies to `seated` mode only.** `standing` — the Bedrock default — uses native client flight and ignores it. Documented in `config.yml` and `StandingFlightMode`'s Javadoc. Mapping blocks/tick onto `Player#setFlySpeed` (an unrelated 0.0–1.0 scale) was deliberately declined as a guess; retuning is a live-server decision.
+- **Design §10.5 ("cruises in the facing direction") holds only in `seated` mode.** In `standing` the player flies where they push, not where they look, and the carpet is decoration. Consistent with design §3's trade-off, but §10.5 as written does not describe the Bedrock default path.
+- **The 5% deploy fuel gate is a tuning value, not a verified one.** On defaults, 6s of ground recharge buys a 3s flight. Confirm the feel in game.
+- **`TeleportFlag.EntityState.RETAIN_PASSENGERS` is `@Deprecated(forRemoval = true)`** as of Paper 1.21.10 with no replacement in `paper-api 26.1.2.build.74-stable` (independently javap-verified). It is the only passenger-preserving teleport and `setVelocity` is prohibited, so it is used deliberately. **This will need revisiting on the next Paper bump.**
+- **`/carpet reload` does not resize an actively-flying rider's fuel tank** — deliberate; replacing it mid-flight would hand them a free refill. New settings apply on their next deploy.
+- **Vertical input is additive**, so a level look plus jump yields magnitude `speed × √2` — the carpet climbs ~41% faster diagonally than it cruises level. Pinned by a test; retune in-game if it feels wrong.
+
 **Withheld gates.** None. Status is `active`; all gates apply.
 
 ## 2. Repository
@@ -171,29 +194,112 @@ and stays unchecked.
 
 ## 4. Compatibility
 
-- [ ] Java 25/Paper 26.1.2 build 74 compile succeeds and `plugin.yml` uses `api-version: '26.1'` (no longer a deviation — the template adopted `'26.1'` on `2026-07-21`; see `PLUGIN_LIFECYCLE.md` §4).
-- [ ] Hard dependencies, soft dependencies, optional APIs, and load ordering were reviewed and declared.
-- [ ] Geyser/Floodgate/ViaVersion review covers Bedrock-safe input, UI, inventory, identity, and protocol behavior.
+- [x] Java 25/Paper 26.1.2 build 74 compile succeeds and `plugin.yml` uses `api-version: '26.1'` (no longer a deviation — the template adopted `'26.1'` on `2026-07-21`; see `PLUGIN_LIFECYCLE.md` §4).
+      Verified in the built JAR: embedded `plugin.yml` declares `api-version: '26.1'`,
+      `main: org.xpfarm.magiccarpet.MagicCarpetPlugin`, version `0.1.0`.
+- [x] Hard dependencies, soft dependencies, optional APIs, and load ordering were reviewed and declared.
+      No hard dependencies. `softdepend: [WorldGuard, floodgate]`. **Both are resolved
+      reflectively** (`Class.forName`) so no optional class is ever linked when the plugin is
+      absent, and every reflection failure degrades to a safe default — `EditionResolver`
+      treats everyone as Java, `WorldGuardRegionQuery` falls back to `RegionQuery.permissive()`.
+      Load ordering: `WorldGuardRegionQuery.registerFlag` runs in `onLoad()`, **not**
+      `onEnable()` — WorldGuard locks its `FlagRegistry` before any plugin's `onEnable()`.
+- [x] Geyser/Floodgate/ViaVersion review covers Bedrock-safe input, UI, inventory, identity, and protocol behavior.
+      No chat-input prompts (Bedrock-hostile); all interaction is commands, a held item, and
+      movement input, which Geyser translates. Edition detected via `FloodgateApi`, absent-safe.
+      The dual-visual design (`BlockDisplay` for Java viewers, `FallingBlock` for Bedrock)
+      exists specifically because Geyser never spawns display entities. `setVelocity` is
+      prohibited plugin-wide for Bedrock reasons. See "Known limitations" §C9 for the upstream
+      Geyser issues this design works around. Bedrock render behaviour itself is gate 7a's.
 
 ## 5. External services
 
-- [ ] External integrations are disabled by default or require explicit configuration and have bounded timeouts.
-- [ ] Ollama/Umami-style external endpoints are optional and failure-tolerant when applicable.
-- [ ] Endpoint failure cannot fail server/plugin startup, and diagnostics redact secrets.
+- [x] External integrations are disabled by default or require explicit configuration and have bounded timeouts.
+      **Not applicable — this plugin makes zero outbound network calls.** Verified: no HTTP
+      client, no socket, no URL usage anywhere in the source.
+- [x] Ollama/Umami-style external endpoints are optional and failure-tolerant when applicable.
+      Not applicable; no external endpoints of any kind.
+- [x] Endpoint failure cannot fail server/plugin startup, and diagnostics redact secrets.
+      No endpoints. Startup safety is nonetheless enforced: `onEnable()` wraps its whole body,
+      logs at SEVERE and disables only itself rather than propagating; config validation never
+      throws for any input. No secrets exist to redact.
 
 ## 6. Tests and build
 
-- [ ] Unit tests cover separable logic, configuration, serialization, permissions, and failure paths where applicable.
-- [ ] `mvn --batch-mode --no-transfer-progress clean verify` succeeds.
-- [ ] The shaded releasable JAR and embedded `plugin.yml` were inspected; `original-*` JARs are excluded.
+- [x] Unit tests cover separable logic, configuration, serialization, permissions, and failure paths where applicable.
+      **107 tests across 10 files.** Every component with logic separable from the Bukkit
+      runtime is covered: config parsing/validation (21), `FuelTank` (16), `FlightGuard` (16),
+      `CarpetCommandParser` (19), `CarpetMotion` (10), `CombatGraceTracker` (9), `CarpetItem`'s
+      pure half (6), `SessionTickOutcome` (4), `WorldGuardRegionQuery`'s reflective-absent path
+      (4), `EditionResolver`'s reflective-absent path (2). The final review confirmed **no
+      component whose testable logic went untested**. No mock framework — hand-rolled fakes only.
+      The untestable classes need a live server and are recorded as gate 7a obligations below.
+- [x] `mvn --batch-mode --no-transfer-progress clean verify` succeeds.
+      Verified at controller level across three consecutive clean runs: exit 0, 107/107 passing.
+      (One earlier run failed; traced to a concurrent Maven invocation on the same `target/`
+      directory, not to the code. Not reproducible in three subsequent runs.)
+- [x] The shaded releasable JAR and embedded `plugin.yml` were inspected; `original-*` JARs are excluded.
+      `target/magic-carpet-0.1.0.jar`. **Zero** `org/bukkit`, `io/papermc` or `net/md_5` classes
+      shaded in — the API correctly comes from the server classpath. `original-magic-carpet-0.1.0.jar`
+      exists in `target/` as the pre-shade intermediate and is excluded from release assets by
+      the workflow's `! -name 'original-*'` filter. Embedded `plugin.yml` verified: name, version,
+      main class, `api-version`, `/carpet` + `magiccarpet` alias, all three permission nodes,
+      `softdepend`.
 
 ## 7. Matrix
 
+**7a (single-plugin runtime verification) — NOT YET RUN.** Implementation and the whole-branch
+review are complete; the disposable-stack boot is the next step. **7b (full-roster matrix) is
+out-of-band and is not required for this plugin's release** — it is triggered by an updater
+manifest change or a Paper/Geyser/Floodgate/ViaVersion bump, not by a `dev` run.
+
 - [ ] Fresh-volume [Legendary Java Minecraft Geyser Floodgate stack](https://github.com/TheRemote/Legendary-Java-Minecraft-Geyser-Floodgate) test covers every updater-managed plugin.
+      **7b — out-of-band, not required for this release.**
 - [ ] Each updater-managed plugin's manifest `enabled` value, default state, and expected fresh-volume behavior are recorded separately.
+      **7b — out-of-band.** Magic Carpet is not yet enrolled in the updater (gate 10).
 - [ ] Paper, Geyser, Floodgate, and ViaVersion start successfully together.
+      **7a — pending.** `scripts/test-stack.sh up` is installed and ready.
 - [ ] Affected commands, permissions, persistence, and configuration reload were exercised over RCON with no server-wide hot reload.
-- [ ] Ollama and Umami unavailable-endpoint tests keep the server and plugins available when applicable.
+      **7a — pending.** See the gate 7a obligation list below.
+- [x] Ollama and Umami unavailable-endpoint tests keep the server and plugins available when applicable.
+      Not applicable — no external services.
+
+### Gate 7a runtime obligations
+
+Carried verbatim from the final whole-branch review. None of these can be settled headlessly;
+each needs the disposable stack, and several need a real client.
+
+1. **Verify the `QUIT` off-hand write actually persists.** Quit mid-flight, rejoin, check the
+   off-hand. The analysis of CraftBukkit's `PlayerList.remove()` (quit event fires, then
+   `save(entityplayer)`) says it does, and that is the basis for the change — but it is an
+   inference, not an observation. If the write is observed *not* to persist on this build,
+   restore the world drop for `QUIT` and record it as a known limitation instead.
+2. **Ground detection via `player.isOnGround()` while mounted — top risk.** May misfire at block
+   edges; carries vanilla's well-known false-positive/negative behaviour. The mount is a
+   zero-hitbox marker ArmorStand moved by teleport, so its own flag would be worse.
+3. **`CarpetItem`**: `create()` item build, glint, PDC round-trip; `isCarpet(ItemStack)` for any
+   non-null stack; `recipe()` registration and actual crafting.
+4. **`CarpetVisual`**: spawn, passenger attachment, scoreboard tag; Java `BlockDisplay` render
+   (flat carpet, no night darkening, `FIXED` billboard) and **calibration of the `-0.6f` Y
+   translation against a real seated rider**; Bedrock `FallingBlock` (visible, no fall, no
+   despawn, no drop, no hurt); `refreshViewers` per-viewer show/hide with no flicker;
+   `remove()` double-call and post-death idempotency.
+5. **`EditionResolver.create()`** against real Java and real Floodgate connections.
+6. **Both throwing deploy paths**, fuel exhaustion → fall damage, and the altitude clamp.
+7. **Per-player exception isolation** with multiple simultaneous riders.
+8. **`shutdownAll` / `sweepOrphans` leave zero orphans**; quit, death, chunk unload and plugin
+   disable each leave zero orphaned entities (design §10.12).
+9. **`applyConfig` live effect on active sessions** — confirm flying riders keep their fuel tank
+   and grounded players' tanks rebuild from the new config.
+10. **The solid-block collision stop and per-tick terrain sampling** — neither is unit-testable:
+    `Material#isSolid()` throws `IllegalStateException: No RegistryAccess implementation found`
+    outside a live Paper registry.
+11. **Standing-mode altitude clamp feel** — the clamp teleports the player to an integer Y every
+    tick while they hold jump above the ceiling; check for rubber-banding.
+12. **`bedrock-mode: seated` against a real Bedrock client** — if the Geyser camera bug does not
+    materialise, a patch release flips the default and Bedrock players sit too (design §3).
+13. **Residual accepted risk**: if the standing-mode flight-flag restore throws, that player's
+    `allowFlight`/`isFlying` may be left un-restored for one cycle. Bounded and self-healing.
 
 ## 8. CI/CD
 
