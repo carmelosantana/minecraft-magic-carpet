@@ -81,6 +81,7 @@ public final class CarpetManager {
 
     private final Map<UUID, CarpetSession> sessions = new ConcurrentHashMap<>();
     private final Map<UUID, FuelTank> fuelTanks = new ConcurrentHashMap<>();
+    private final Set<UUID> teardownInProgress = ConcurrentHashMap.newKeySet();
 
     private volatile MagicCarpetConfig config;
     private volatile FlightGuard flightGuard;
@@ -281,8 +282,39 @@ public final class CarpetManager {
         return sessions.containsKey(player.getUniqueId());
     }
 
+    /**
+     * Whether {@code player}'s session is, at this exact moment, being torn down by this
+     * manager's own {@link #endSession} — specifically while {@code FlightMode.dismiss} is
+     * removing the mount/anchor entity, which can itself trigger a Bukkit {@code
+     * EntityDismountEvent} for the rider.
+     *
+     * <p>Added for task 9's dismount listener, which must cancel any dismount this manager did
+     * not initiate (see {@link #endSession}'s comment on the call this flag brackets) while
+     * letting this manager's own teardown-triggered dismount pass through uncancelled. This is
+     * the one authorized touch to this class from task 9's brief — every other method's
+     * signature and behaviour is unchanged from the fix-pass-2 API task 7 and task 8 left this
+     * class with.
+     */
+    public boolean isTeardownInProgress(Player player) {
+        return player != null && teardownInProgress.contains(player.getUniqueId());
+    }
+
     private void endSession(Player player, CarpetSession session, DismissCause cause) {
-        session.mode().dismiss(player); // never throws; idempotent for both modes
+        // Task 9 addition: FlightMode.dismiss() below removes the mount/anchor entity, which
+        // can itself raise a Bukkit EntityDismountEvent for player (the rider being removed
+        // from a vehicle that just disappeared). CarpetListeners must cancel any dismount it
+        // did NOT ask for (a sneaking rider would otherwise be ejected mid-flight, when sneak
+        // is supposed to mean "descend, stay seated") while letting exactly this one through
+        // uncancelled. isTeardownInProgress(player) is how it tells the two apart. Scoped to
+        // this one call only, and always cleared via finally even if dismiss() itself throws
+        // (it is documented not to, but this must not leave the flag stuck regardless).
+        UUID id = player.getUniqueId();
+        teardownInProgress.add(id);
+        try {
+            session.mode().dismiss(player); // never throws; idempotent for both modes
+        } finally {
+            teardownInProgress.remove(id);
+        }
         try {
             session.visual().remove();
         } catch (RuntimeException e) {
