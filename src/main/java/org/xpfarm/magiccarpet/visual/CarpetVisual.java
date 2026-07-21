@@ -76,11 +76,36 @@ public final class CarpetVisual {
         this.editionResolver = editionResolver;
 
         Location location = mount.getLocation();
-        this.javaVisual = spawnJavaVisual(location);
-        this.bedrockVisual = spawnBedrockVisual(location);
+        BlockDisplay java = null;
+        FallingBlock bedrock = null;
+        try {
+            java = spawnJavaVisual(location);
+            bedrock = spawnBedrockVisual(location);
+            attachPassenger(mount, java);
+            attachPassenger(mount, bedrock);
+        } catch (RuntimeException e) {
+            // Partial construction failed: despawn whatever was already spawned before
+            // rethrowing, so the caller never has to reason about an orphaned entity.
+            // removeIfAlive swallows its own exceptions so cleanup itself can never mask e.
+            removeIfAlive(java);
+            removeIfAlive(bedrock);
+            throw e;
+        }
+        this.javaVisual = java;
+        this.bedrockVisual = bedrock;
+    }
 
-        mount.addPassenger(javaVisual);
-        mount.addPassenger(bedrockVisual);
+    /**
+     * Attaches {@code passenger} to {@code mount}, treating a {@code false} return (Bukkit's
+     * signal for a rejected attach, as opposed to a thrown exception) as a construction failure
+     * of the same kind - it is converted into an exception so the constructor's single catch
+     * block handles both failure modes identically.
+     */
+    private static void attachPassenger(Entity mount, Entity passenger) {
+        if (!mount.addPassenger(passenger)) {
+            throw new IllegalStateException(
+                    "Mount " + mount.getUniqueId() + " rejected passenger " + passenger.getUniqueId());
+        }
     }
 
     private static BlockDisplay spawnJavaVisual(Location location) {
@@ -95,9 +120,7 @@ public final class CarpetVisual {
             entity.setDisplayHeight(0f);
             entity.setBrightness(FULL_BRIGHTNESS);
             entity.setBillboard(Display.Billboard.FIXED);
-            entity.setVisibleByDefault(false);
-            entity.setPersistent(false);
-            entity.addScoreboardTag(VISUAL_TAG);
+            applyCommonVisualConfig(entity);
         });
     }
 
@@ -108,10 +131,15 @@ public final class CarpetVisual {
             entity.setDropItem(false);
             entity.setHurtEntities(false);
             entity.shouldAutoExpire(false);
-            entity.setVisibleByDefault(false);
-            entity.setPersistent(false);
-            entity.addScoreboardTag(VISUAL_TAG);
+            applyCommonVisualConfig(entity);
         });
+    }
+
+    /** Configuration shared by both visual entities: hidden by default, non-persistent, tagged. */
+    private static void applyCommonVisualConfig(Entity entity) {
+        entity.setVisibleByDefault(false);
+        entity.setPersistent(false);
+        entity.addScoreboardTag(VISUAL_TAG);
     }
 
     /**
@@ -141,9 +169,19 @@ public final class CarpetVisual {
         removeIfAlive(bedrockVisual);
     }
 
+    /**
+     * Removes {@code entity} if it is still alive, swallowing any exception {@code remove()}
+     * itself throws. Used both by the public {@link #remove()} and by the constructor's
+     * partial-failure cleanup path, where a secondary exception here must never replace the
+     * original failure the constructor is propagating.
+     */
     private static void removeIfAlive(Entity entity) {
-        if (entity != null && !entity.isDead()) {
-            entity.remove();
+        try {
+            if (entity != null && !entity.isDead()) {
+                entity.remove();
+            }
+        } catch (RuntimeException ignored) {
+            // Cleanup best-effort only: never mask the caller's original exception.
         }
     }
 }
