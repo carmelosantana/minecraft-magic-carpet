@@ -225,6 +225,122 @@ final class MagicCarpetConfigTest {
     }
 
     @Test
+    void nanFlightSpeedFallsBackToDefaultAndWarnsOnce() {
+        InMemoryConfigSource source = new InMemoryConfigSource();
+        source.set("flight.speed", Double.NaN);
+
+        List<String> warnings = new ArrayList<>();
+        MagicCarpetConfig config = MagicCarpetConfig.load(source, warnings::add);
+
+        assertEquals(0.5, config.flightSpeed());
+        assertEquals(1, warnings.size());
+        assertTrue(warnings.get(0).contains("flight.speed"));
+        assertTrue(warnings.get(0).contains("NaN"));
+    }
+
+    @Test
+    void positiveInfinityFlightSpeedFallsBackToDefaultAndWarnsOnce() {
+        InMemoryConfigSource source = new InMemoryConfigSource();
+        source.set("flight.speed", Double.POSITIVE_INFINITY);
+
+        List<String> warnings = new ArrayList<>();
+        MagicCarpetConfig config = MagicCarpetConfig.load(source, warnings::add);
+
+        assertEquals(0.5, config.flightSpeed());
+        assertEquals(1, warnings.size());
+        assertTrue(warnings.get(0).contains("flight.speed"));
+        assertTrue(warnings.get(0).contains("Infinity"));
+    }
+
+    @Test
+    void negativeInfinityFlightSpeedFallsBackToDefaultAndWarnsOnce() {
+        InMemoryConfigSource source = new InMemoryConfigSource();
+        source.set("flight.speed", Double.NEGATIVE_INFINITY);
+
+        List<String> warnings = new ArrayList<>();
+        MagicCarpetConfig config = MagicCarpetConfig.load(source, warnings::add);
+
+        assertEquals(0.5, config.flightSpeed());
+        assertEquals(1, warnings.size());
+        assertTrue(warnings.get(0).contains("flight.speed"));
+        assertTrue(warnings.get(0).contains("-Infinity"));
+    }
+
+    @Test
+    void nonNumericFlightSpeedFallsBackToDefaultAndWarnsOnce() {
+        InMemoryConfigSource source = new InMemoryConfigSource();
+        source.set("flight.speed", "fast");
+
+        List<String> warnings = new ArrayList<>();
+        MagicCarpetConfig config = MagicCarpetConfig.load(source, warnings::add);
+
+        assertEquals(0.5, config.flightSpeed());
+        assertEquals(1, warnings.size());
+        assertTrue(warnings.get(0).contains("flight.speed"));
+        assertTrue(warnings.get(0).contains("fast"));
+    }
+
+    @Test
+    void nonNumericAltitudeCeilingFallsBackToDefaultAndWarnsOnce() {
+        InMemoryConfigSource source = new InMemoryConfigSource();
+        source.set("flight.altitude-ceiling", "abc");
+
+        List<String> warnings = new ArrayList<>();
+        MagicCarpetConfig config = MagicCarpetConfig.load(source, warnings::add);
+
+        assertEquals(64, config.flightAltitudeCeiling());
+        assertEquals(1, warnings.size());
+        assertTrue(warnings.get(0).contains("flight.altitude-ceiling"));
+        assertTrue(warnings.get(0).contains("abc"));
+    }
+
+    @Test
+    void absentAltitudeCeilingUsesDefaultWithNoWarning() {
+        InMemoryConfigSource source = new InMemoryConfigSource();
+        // flight.altitude-ceiling deliberately left unset.
+
+        List<String> warnings = new ArrayList<>();
+        MagicCarpetConfig config = MagicCarpetConfig.load(source, warnings::add);
+
+        assertEquals(64, config.flightAltitudeCeiling());
+        assertTrue(warnings.isEmpty(), "an absent key must not warn");
+    }
+
+    @Test
+    void keysSetToExactlyTheirDefaultValueDoNotWarn() {
+        InMemoryConfigSource source = new InMemoryConfigSource();
+        source.set("flight.speed", 0.5);
+        source.set("flight.altitude-ceiling", 64);
+
+        List<String> warnings = new ArrayList<>();
+        MagicCarpetConfig config = MagicCarpetConfig.load(source, warnings::add);
+
+        assertEquals(0.5, config.flightSpeed());
+        assertEquals(64, config.flightAltitudeCeiling());
+        assertTrue(warnings.isEmpty(), "a key legitimately equal to its default must not warn");
+    }
+
+    @Test
+    void constructorToleratesNullWorldsList() {
+        MagicCarpetConfig config = new MagicCarpetConfig(
+                FlightModeKind.SEATED,
+                FlightModeKind.STANDING,
+                0.5,
+                64,
+                60,
+                120,
+                true,
+                40,
+                WorldListMode.DENY_LIST,
+                null,
+                true,
+                true,
+                true);
+
+        assertTrue(config.worldsList().isEmpty());
+    }
+
+    @Test
     void worldsListPopulatedIsValidUnderEitherMode() {
         InMemoryConfigSource allowSource = new InMemoryConfigSource();
         allowSource.set("worlds.mode", "allow-list");

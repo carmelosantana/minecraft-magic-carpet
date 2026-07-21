@@ -41,4 +41,15 @@ public interface ConfigSource {
 
     /** Returns the string list at {@code path}, or an empty list if absent. */
     List<String> getStringList(String path);
+
+    /** Returns {@code true} if {@code path} holds an explicitly set value, {@code false} if absent. */
+    boolean isSet(String path);
+
+    /**
+     * Returns the raw value stored at {@code path}, stringified, or {@code null} if {@code path}
+     * is absent. Unlike the typed accessors above, this never substitutes a default for a
+     * present-but-wrong-typed value: it exists so callers can tell "absent" apart from
+     * "present but unusable" for warning purposes.
+     */
+    String getRaw(String path);
 }

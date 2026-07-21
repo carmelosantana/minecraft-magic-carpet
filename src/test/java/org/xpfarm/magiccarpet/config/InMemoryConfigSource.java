@@ -64,4 +64,15 @@ final class InMemoryConfigSource implements ConfigSource {
         }
         return result;
     }
+
+    @Override
+    public boolean isSet(String path) {
+        return values.containsKey(path);
+    }
+
+    @Override
+    public String getRaw(String path) {
+        Object value = values.get(path);
+        return value == null ? null : String.valueOf(value);
+    }
 }

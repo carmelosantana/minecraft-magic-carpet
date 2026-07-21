@@ -54,4 +54,14 @@ public final class BukkitConfigSource implements ConfigSource {
     public List<String> getStringList(String path) {
         return configuration.getStringList(path);
     }
+
+    @Override
+    public boolean isSet(String path) {
+        return configuration.isSet(path);
+    }
+
+    @Override
+    public String getRaw(String path) {
+        return configuration.getString(path);
+    }
 }

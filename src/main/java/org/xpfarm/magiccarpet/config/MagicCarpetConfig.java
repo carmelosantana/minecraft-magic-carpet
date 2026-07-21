@@ -11,6 +11,7 @@ package org.xpfarm.magiccarpet.config;
 
 import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Consumer;
 import java.util.function.Function;
@@ -62,7 +63,7 @@ public record MagicCarpetConfig(
 
     /** Defensive copy so the record stays immutable regardless of what the caller passes. */
     public MagicCarpetConfig {
-        worldsList = List.copyOf(worldsList);
+        worldsList = List.copyOf(Objects.requireNonNullElse(worldsList, List.of()));
     }
 
     /**
@@ -117,8 +118,12 @@ public record MagicCarpetConfig(
     private static double readDouble(
             ConfigSource source, Consumer<String> warn, String key, double def, double min, double max) {
         double value = source.getDouble(key, def);
-        if (value < min || value > max) {
+        if (!Double.isFinite(value) || value < min || value > max) {
             warn.accept(rangeMessage(key, value, min, max, def));
+            return def;
+        }
+        if (value == def && wrongTypeButPresent(source, key)) {
+            warn.accept(typeMessage(key, source.getRaw(key), def));
             return def;
         }
         return value;
@@ -131,7 +136,37 @@ public record MagicCarpetConfig(
             warn.accept(rangeMessage(key, value, min, max, def));
             return def;
         }
+        if (value == def && wrongTypeButPresent(source, key)) {
+            warn.accept(typeMessage(key, source.getRaw(key), def));
+            return def;
+        }
         return value;
+    }
+
+    /**
+     * True when {@code key} is present in {@code source} but its raw value does not itself
+     * parse as a number — i.e. the typed accessor's returned value equaled the default only
+     * because it silently substituted it for a wrong-typed value, not because the key is
+     * genuinely absent or genuinely set to the default.
+     */
+    private static boolean wrongTypeButPresent(ConfigSource source, String key) {
+        if (!source.isSet(key)) {
+            return false;
+        }
+        String raw = source.getRaw(key);
+        return !isParsableAsNumber(raw);
+    }
+
+    private static boolean isParsableAsNumber(String raw) {
+        if (raw == null) {
+            return false;
+        }
+        try {
+            Double.parseDouble(raw);
+            return true;
+        } catch (NumberFormatException e) {
+            return false;
+        }
     }
 
     private static <T extends Enum<T>> T readEnum(
@@ -163,6 +198,13 @@ public record MagicCarpetConfig(
         return String.format(
                 Locale.ROOT,
                 "Invalid value for '%s': '%s' (unrecognized); using default '%s'",
+                key, raw, def);
+    }
+
+    private static String typeMessage(String key, String raw, Object def) {
+        return String.format(
+                Locale.ROOT,
+                "Invalid value for '%s': '%s' (not a number); using default '%s'",
                 key, raw, def);
     }
 }
