@@ -1,0 +1,26 @@
+name: MagicCarpet
+version: '${project.version}'
+main: org.xpfarm.magiccarpet.MagicCarpetPlugin
+api-version: '26.1'
+author: Carmelo Santana
+website: https://xpfarm.org
+description: Enchanted rug carried in the off-hand: jump to unfurl it, fly where you look, sneak back down to stow it
+
+softdepend: [WorldGuard, floodgate]
+
+commands:
+  carpet:
+    description: Manage Magic Carpet rugs
+    usage: /carpet <give [player] | off | reload>
+    aliases: [magiccarpet]
+
+permissions:
+  magiccarpet.use:
+    description: Deploy a magic carpet and fly on it
+    default: true
+  magiccarpet.craft:
+    description: Craft the magic carpet rug
+    default: true
+  magiccarpet.admin:
+    description: Issue magic carpet rugs and reload the configuration
+    default: op
