@@ -256,7 +256,17 @@ public final class CarpetManager {
     }
 
     /**
-     * Whether {@code player} currently has an active carpet flight session.
+     * Whether {@code player} currently has an active carpet flight session in this manager.
+     *
+     * <p><strong>Not the same thing as {@link Player#isFlying()}.</strong> Bukkit's {@code
+     * Player#isFlying()} is the vanilla flight flag (creative/spectator flight, or an
+     * {@code allowFlight} grant) and has nothing to do with carpets — a creative-mode player can
+     * have {@code isFlying()} return {@code true} with no carpet session at all, and a seated
+     * carpet rider (see {@code SeatedFlightMode}) has an active session here while {@code
+     * player.isFlying()} is {@code false}, since they are riding a mount rather than using
+     * vanilla flight. This method answers a different question — "does {@code player} have a
+     * live {@link CarpetSession} in {@link #sessions}" — and is named {@code hasActiveSession}
+     * rather than reusing {@code isFlying} specifically to avoid that collision.
      *
      * <p>Added for task 8's {@code /carpet off}, which needs to tell a rider with nothing to
      * stow ("you have no active carpet") apart from an actual dismiss ("your carpet has been
@@ -264,7 +274,7 @@ public final class CarpetManager {
      * case, so it cannot answer that question on its own. Purely additive: does not change the
      * signature or behaviour of any existing method.
      */
-    public boolean isFlying(Player player) {
+    public boolean hasActiveSession(Player player) {
         if (player == null) {
             return false;
         }

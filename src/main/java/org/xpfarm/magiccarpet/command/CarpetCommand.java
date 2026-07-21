@@ -16,6 +16,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.logging.Level;
 import org.bukkit.Bukkit;
 import org.bukkit.World;
 import org.bukkit.command.Command;
@@ -113,7 +114,7 @@ public final class CarpetCommand implements CommandExecutor, TabCompleter {
             sender.sendMessage("Only players can use /carpet off.");
             return;
         }
-        if (!carpetManager.isFlying(player)) {
+        if (!carpetManager.hasActiveSession(player)) {
             player.sendMessage("You don't have an active carpet flight.");
             return;
         }
@@ -126,7 +127,20 @@ public final class CarpetCommand implements CommandExecutor, TabCompleter {
             sender.sendMessage("You do not have permission to do that.");
             return;
         }
-        boolean success = configReloader.reload();
+        boolean success;
+        try {
+            success = configReloader.reload();
+        } catch (RuntimeException e) {
+            // ConfigReloader's contract says it must never throw, but that is documentation,
+            // not enforcement: an unguarded call here would leak a raw stack trace through
+            // Bukkit's generic command-error path instead of this command's own clean failure
+            // message. Every other exception boundary in this codebase (CarpetManager.deploy,
+            // tick, shutdownAll) defensively wraps a documented-safe call the same way.
+            Bukkit.getLogger().log(Level.WARNING,
+                    "Magic Carpet: configReloader.reload() threw despite its contract; treating"
+                            + " as a failed reload for " + sender.getName(), e);
+            success = false;
+        }
         if (success) {
             sender.sendMessage("Magic Carpet configuration reloaded.");
         } else {

@@ -19,9 +19,14 @@ import java.util.Optional;
  * {@link CarpetCommand}, not here — so this class is exercised by plain JUnit tests with no
  * live server, which is the entire reason the parsing/execution split exists for this task.
  *
- * <p>Never throws for any input, including {@code null} or an empty array: both are treated
- * as "no subcommand given" and resolve to {@link Subcommand#HELP}, matching {@code /carpet}
- * with no arguments.
+ * <p>Never throws for any input, including {@code null} or an empty array, or an array
+ * containing a {@code null} or blank element at any position: a {@code null} array and an empty
+ * array are both treated as "no subcommand given" and resolve to {@link Subcommand#HELP},
+ * matching {@code /carpet} with no arguments; a {@code null} or blank first token is likewise
+ * treated as absent and also resolves to {@link Subcommand#HELP}; and a {@code null} or blank
+ * second token for {@code give} is treated the same as a missing one — {@link
+ * ParsedCommand#targetName()} comes back {@link Optional#empty()} rather than wrapping the
+ * {@code null}/blank string or throwing.
  */
 public final class CarpetCommandParser {
 
@@ -34,12 +39,18 @@ public final class CarpetCommandParser {
      * case-insensitive; any tokens beyond the ones a given subcommand actually uses (a
      * target name for {@code give}, nothing for the others) are ignored rather than causing
      * a parse failure — {@code /carpet off now please} still parses as {@link Subcommand#OFF}.
+     * A {@code null} or blank element anywhere in {@code args} is treated as absent rather than
+     * dereferenced — see the class Javadoc.
      */
     public static ParsedCommand parse(String[] args) {
         if (args == null || args.length == 0) {
             return new ParsedCommand(Subcommand.HELP, Optional.empty());
         }
-        String token = args[0].toLowerCase(Locale.ROOT);
+        String first = args[0];
+        if (first == null || first.isBlank()) {
+            return new ParsedCommand(Subcommand.HELP, Optional.empty());
+        }
+        String token = first.toLowerCase(Locale.ROOT);
         return switch (token) {
             case "give" -> new ParsedCommand(Subcommand.GIVE, targetName(args));
             case "off" -> new ParsedCommand(Subcommand.OFF, Optional.empty());
@@ -50,7 +61,7 @@ public final class CarpetCommandParser {
     }
 
     private static Optional<String> targetName(String[] args) {
-        if (args.length < 2 || args[1].isBlank()) {
+        if (args.length < 2 || args[1] == null || args[1].isBlank()) {
             return Optional.empty();
         }
         return Optional.of(args[1]);

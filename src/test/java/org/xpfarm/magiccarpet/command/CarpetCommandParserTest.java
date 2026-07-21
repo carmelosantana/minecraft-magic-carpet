@@ -120,6 +120,38 @@ final class CarpetCommandParserTest {
     }
 
     @Test
+    void nullFirstElementIsTreatedAsAbsentAndResolvesToHelp() {
+        ParsedCommand parsed = CarpetCommandParser.parse(new String[] {null});
+
+        assertEquals(Subcommand.HELP, parsed.subcommand());
+        assertTrue(parsed.targetName().isEmpty());
+    }
+
+    @Test
+    void emptyStringFirstElementIsTreatedAsAbsentAndResolvesToHelp() {
+        ParsedCommand parsed = CarpetCommandParser.parse(new String[] {""});
+
+        assertEquals(Subcommand.HELP, parsed.subcommand());
+        assertTrue(parsed.targetName().isEmpty());
+    }
+
+    @Test
+    void whitespaceOnlyFirstElementIsTreatedAsAbsentAndResolvesToHelp() {
+        ParsedCommand parsed = CarpetCommandParser.parse(new String[] {"   "});
+
+        assertEquals(Subcommand.HELP, parsed.subcommand());
+        assertTrue(parsed.targetName().isEmpty());
+    }
+
+    @Test
+    void nullGiveTargetElementIsTreatedAsAbsent() {
+        ParsedCommand parsed = CarpetCommandParser.parse(new String[] {"give", null});
+
+        assertEquals(Subcommand.GIVE, parsed.subcommand());
+        assertTrue(parsed.targetName().isEmpty());
+    }
+
+    @Test
     void parsedCommandRejectsNullSubcommand() {
         assertThrows(NullPointerException.class, () -> new ParsedCommand(null, Optional.empty()));
     }
