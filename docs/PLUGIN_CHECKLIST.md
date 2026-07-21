@@ -248,19 +248,38 @@ and stays unchecked.
 
 ## 7. Matrix
 
-**7a (single-plugin runtime verification) — NOT YET RUN.** Implementation and the whole-branch
-review are complete; the disposable-stack boot is the next step. **7b (full-roster matrix) is
-out-of-band and is not required for this plugin's release** — it is triggered by an updater
-manifest change or a Paper/Geyser/Floodgate/ViaVersion bump, not by a `dev` run.
+**7a (single-plugin runtime verification) — PASSED on the second attempt.** The first boot
+**FAILED**: `MagicCarpet` was absent from `/plugins` entirely because `plugin.yml` had an
+unquoted `": "` in its description, so SnakeYAML threw `ScannerException: mapping values are
+not allowed here` and Paper logged `InvalidDescriptionException` without ever registering the
+plugin. Fixed in `3b3aafe`, which also adds `PluginDescriptorTest` so the same class of defect
+now fails at gate 6. **7b (full-roster matrix) is out-of-band and is not required for this
+plugin's release** — it is triggered by an updater manifest change or a
+Paper/Geyser/Floodgate/ViaVersion bump, not by a `dev` run.
 
 - [ ] Fresh-volume [Legendary Java Minecraft Geyser Floodgate stack](https://github.com/TheRemote/Legendary-Java-Minecraft-Geyser-Floodgate) test covers every updater-managed plugin.
       **7b — out-of-band, not required for this release.**
 - [ ] Each updater-managed plugin's manifest `enabled` value, default state, and expected fresh-volume behavior are recorded separately.
       **7b — out-of-band.** Magic Carpet is not yet enrolled in the updater (gate 10).
-- [ ] Paper, Geyser, Floodgate, and ViaVersion start successfully together.
-      **7a — pending.** `scripts/test-stack.sh up` is installed and ready.
-- [ ] Affected commands, permissions, persistence, and configuration reload were exercised over RCON with no server-wide hot reload.
-      **7a — pending.** See the gate 7a obligation list below.
+- [x] Paper, Geyser, Floodgate, and ViaVersion start successfully together.
+      Fresh-volume disposable stack, `Done (19.322s)`, Java port served a real Minecraft
+      handshake (`Paper 26.1.2 | protocol 775`). RCON `plugins` reported 4 plugins, **all green
+      (`§a`)**: `floodgate`, `Geyser-Spigot (2.11.0-SNAPSHOT)`, `MagicCarpet (0.1.0)`,
+      `ViaVersion (5.11.0)`. Note this also empirically settles the earlier Geyser/Paper
+      protocol-mismatch scare — Geyser 2.11.0 and Paper 26.1.2 booted together cleanly with
+      ViaVersion present.
+- [x] Affected commands, permissions, persistence, and configuration reload were exercised over RCON with no server-wide hot reload.
+      `/carpet`, `/carpet help`, `/carpet bogus` → help text, no stack trace.
+      `/carpet off` from console → `Only players can use /carpet off.`
+      `/carpet give` from console → `Console has no inventory. Specify a player: /carpet give <player>`
+      `/carpet reload` → `Magic Carpet configuration reloaded.`
+      Startup logged `Swept 0 orphaned carpet entities from a previous run.` and
+      `Magic Carpet enabled.` Log grep for a server-wide reload: **0 matches**.
+      **`onLoad()` WorldGuard flag registration verified live**: WorldGuard is absent from the
+      test stack, `ClassNotFoundException` was caught, one WARNING logged, and the plugin
+      continued with the permissive region query — the designed fail-open path, observed rather
+      than assumed. No exceptions from `org.xpfarm` code. Stack torn down cleanly, no leaked
+      containers or slot lease.
 - [x] Ollama and Umami unavailable-endpoint tests keep the server and plugins available when applicable.
       Not applicable — no external services.
 
@@ -268,6 +287,10 @@ manifest change or a Paper/Geyser/Floodgate/ViaVersion bump, not by a `dev` run.
 
 Carried verbatim from the final whole-branch review. None of these can be settled headlessly;
 each needs the disposable stack, and several need a real client.
+
+**These remain OPEN after the 7a pass.** Gate 7a proved the plugin loads, enables, and answers
+commands. It attaches no client, so nothing below about rendering, movement, or item custody
+in play was settled. Items 1–13 are the gate 12 play-test obligation.
 
 1. **Verify the `QUIT` off-hand write actually persists.** Quit mid-flight, rejoin, check the
    off-hand. The analysis of CraftBukkit's `PlayerList.remove()` (quit event fires, then
