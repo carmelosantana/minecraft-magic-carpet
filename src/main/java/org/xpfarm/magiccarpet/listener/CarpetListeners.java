@@ -10,7 +10,9 @@
 package org.xpfarm.magiccarpet.listener;
 
 import com.destroystokyo.paper.event.player.PlayerJumpEvent;
+import java.util.Map;
 import java.util.Objects;
+import java.util.UUID;
 import org.bukkit.Bukkit;
 import org.bukkit.Chunk;
 import org.bukkit.Keyed;
@@ -55,17 +57,6 @@ public final class CarpetListeners implements Listener {
 
     private static final String USE_PERMISSION = "magiccarpet.use";
     private static final String CRAFT_PERMISSION = "magiccarpet.craft";
-
-    /**
-     * Deliberately the same literal value as {@code SeatedFlightMode.MOUNT_TAG} / {@code
-     * StandingFlightMode.ANCHOR_TAG} / {@code CarpetVisual.VISUAL_TAG} / {@code
-     * CarpetManager.ORPHAN_TAG}, so every carpet-related entity is identifiable by the same tag.
-     * Not imported from any of those classes, matching the precedent already set between the
-     * {@code flight}, {@code visual}, and {@code session} packages: each package that needs this
-     * literal declares its own copy rather than creating a cross-package dependency just to
-     * share a string constant.
-     */
-    private static final String CARPET_ENTITY_TAG = "magiccarpet";
 
     private final CarpetManager carpetManager;
     private final CombatGraceTracker combatGrace = new CombatGraceTracker();
@@ -203,62 +194,57 @@ public final class CarpetListeners implements Listener {
     }
 
     /**
-     * Dismisses any session whose rider is in a chunk that is unloading.
+     * Dismisses any session whose mount, anchor, or visual entity is physically in a chunk that
+     * is unloading.
      *
-     * <p><strong>Relevance check, cheap first ({@code chunk.getEntities()}).</strong> This event
-     * fires constantly — every chunk that falls outside every player's view distance unloads,
-     * usually with nothing carpet-related in it at all. {@link Chunk#getEntities()} is scoped to
-     * the one chunk in question (not a scan of every session or every entity on the server), so
-     * checking it for the {@code magiccarpet} scoreboard tag is the cheap map/set-membership
-     * style check the brief calls for: the overwhelmingly common case (no tagged entity in this
-     * chunk) returns immediately without ever touching {@code CarpetManager} or iterating online
-     * players.
+     * <p><strong>Exact identity check, not location coincidence.</strong> This fix-pass version
+     * replaces an earlier revision that inferred which sessions were affected by comparing each
+     * online rider's <em>own</em> current chunk coordinates against the unloading chunk — a
+     * proxy that could both false-positive (a rider merely standing at those coordinates, not
+     * actually the one whose mount is there) and false-negative (a rider whose mount had drifted
+     * a tick behind their own position). {@link CarpetManager#activeSessionEntityOwners()} gives
+     * an exact map from every session's tracked entity UUIDs (mount/anchor plus both visual
+     * passengers) to the owning player's UUID; this method matches that map against {@link
+     * Chunk#getEntities()} — the actual entities physically present in the unloading chunk — by
+     * UUID, not by tag or coordinate proximity.
      *
-     * <p><strong>Correlating the tagged entity back to a rider.</strong> {@code CarpetManager}
-     * exposes no reverse lookup from a mount/anchor entity to the player it belongs to, and this
-     * task is authorized to touch {@code CarpetManager} in exactly one place (the teardown flag
-     * above) — not to add one. Rather than inventing that lookup, this only runs the second,
-     * costlier step once the cheap check above has already found a tagged entity physically
-     * present in the unloading chunk: it scans that chunk's world's online players for one whose
-     * {@link CarpetManager#hasActiveSession} is true and whose <em>own</em> current chunk
-     * coordinates match the unloading chunk's. This is a deliberate proxy for "whose mount is in
-     * the unloading chunk" rather than a literal entity-identity check: both {@code
-     * SeatedFlightMode}'s mount and {@code StandingFlightMode}'s anchor are teleported to track
-     * the rider's own location every tick (the anchor explicitly so — see its Javadoc), so the
-     * rider and their mount/anchor share the same chunk in the overwhelming majority of ticks;
-     * the anchor lags the player by at most one tick per task 7's own altitude-ceiling note. The
-     * residual risk — a rider exactly at a chunk boundary during the one tick their mount and
-     * they briefly disagree about which chunk they are in — is flagged for gate 7a runtime
-     * verification rather than guessed away.
+     * <p><strong>Cheap in the overwhelming common case.</strong> This event fires constantly —
+     * every chunk that falls outside every player's view distance unloads, the vast majority of
+     * the time with nobody flying anywhere on the server. The lookup map is built once per event
+     * (never once per session or per candidate entity) and doubles as the early-out: an empty
+     * map (no active session at all) returns immediately, before {@link Chunk#getEntities()} is
+     * ever called. When sessions do exist, matching is an O(1) {@code Map.get} per entity
+     * actually in the chunk, scoped to that one chunk rather than a scan of every session or
+     * every online player.
      *
      * <p>{@code DismissCause.ERROR} is used for this teardown cause: none of the eight existing
-     * causes is a semantic match for "the world unloaded out from under this session," and
-     * adding a ninth is out of this task's authorized scope for {@code CarpetManager} (only the
-     * teardown flag is). {@code ERROR}'s own Javadoc — "an isolated bug affecting one rider, not
-     * the plugin or server shutting down" — is the closest existing fit: an orphaned mid-flight
+     * causes is a semantic match for "the world unloaded out from under this session," and this
+     * task's brief authorizes only additive, read-only touches to {@code CarpetManager} — not a
+     * ninth cause. {@code ERROR}'s own Javadoc — "an isolated bug affecting one rider, not the
+     * plugin or server shutting down" — is the closest existing fit: an orphaned mid-flight
      * session from an unloaded chunk is exactly that kind of anomaly, not a normal end-of-flight
      * reason like landing, fuel, combat, a command, a quit, or a death.
+     *
+     * <p>{@link CarpetManager#dismiss} is idempotent and null-safe, so no redundant lookup is
+     * needed to guard against a chunk containing more than one of a single session's entities
+     * (e.g. the mount and both visual passengers all unload together, the common case): every
+     * match after the first is simply a harmless no-op.
      */
     @EventHandler
     public void onChunkUnload(ChunkUnloadEvent event) {
+        Map<UUID, UUID> entityOwners = carpetManager.activeSessionEntityOwners();
+        if (entityOwners.isEmpty()) {
+            return; // No active session anywhere; nothing this chunk could possibly contain.
+        }
         Chunk chunk = event.getChunk();
-        boolean relevant = false;
         for (Entity entity : chunk.getEntities()) {
-            if (entity.getScoreboardTags().contains(CARPET_ENTITY_TAG)) {
-                relevant = true;
-                break;
-            }
-        }
-        if (!relevant) {
-            return;
-        }
-        for (Player player : chunk.getWorld().getPlayers()) {
-            if (!carpetManager.hasActiveSession(player)) {
+            UUID ownerId = entityOwners.get(entity.getUniqueId());
+            if (ownerId == null) {
                 continue;
             }
-            Chunk riderChunk = player.getLocation().getChunk();
-            if (riderChunk.getX() == chunk.getX() && riderChunk.getZ() == chunk.getZ()) {
-                carpetManager.dismiss(player, CarpetManager.DismissCause.ERROR);
+            Player rider = Bukkit.getPlayer(ownerId);
+            if (rider != null) {
+                carpetManager.dismiss(rider, CarpetManager.DismissCause.ERROR);
             }
         }
     }

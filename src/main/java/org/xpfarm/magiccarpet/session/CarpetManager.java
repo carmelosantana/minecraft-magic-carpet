@@ -11,6 +11,7 @@ package org.xpfarm.magiccarpet.session;
 
 import io.papermc.paper.entity.TeleportFlag;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Objects;
@@ -290,13 +291,51 @@ public final class CarpetManager {
      *
      * <p>Added for task 9's dismount listener, which must cancel any dismount this manager did
      * not initiate (see {@link #endSession}'s comment on the call this flag brackets) while
-     * letting this manager's own teardown-triggered dismount pass through uncancelled. This is
-     * the one authorized touch to this class from task 9's brief — every other method's
-     * signature and behaviour is unchanged from the fix-pass-2 API task 7 and task 8 left this
-     * class with.
+     * letting this manager's own teardown-triggered dismount pass through uncancelled. Originally
+     * documented as "the one authorized touch to this class from task 9's brief" — task 9's fix
+     * pass added a second, purely additive accessor, {@link #activeSessionEntityOwners()}, for
+     * the same reason: both are read-only additions {@code CarpetListeners} needs and neither
+     * changes the signature or behaviour of any pre-existing method.
      */
     public boolean isTeardownInProgress(Player player) {
         return player != null && teardownInProgress.contains(player.getUniqueId());
+    }
+
+    /**
+     * A snapshot mapping every entity UUID that belongs to a currently active session — the
+     * mount/anchor ({@link CarpetSession#mount()}) plus both {@link CarpetVisual} passenger
+     * entities ({@link CarpetSession#visual()}'s {@code entityIds()}) — to the UUID of the
+     * player whose session it is. Empty (never {@code null}) when no session is active, which
+     * is the overwhelmingly common case: most {@link org.bukkit.event.world.ChunkUnloadEvent}s
+     * server-wide fire with nobody flying at all.
+     *
+     * <p>Added for task 9's fix pass, replacing {@code CarpetListeners.onChunkUnload}'s original
+     * location-coincidence proxy (matching a rider's own current chunk against the unloading
+     * chunk) with an exact identity check: that listener calls this once per {@code
+     * ChunkUnloadEvent} — not once per session and not once per candidate entity — checks it for
+     * emptiness as its own cheap early-out before ever touching {@link
+     * org.bukkit.Chunk#getEntities()}, and then does an O(1) {@code Map.get} per entity actually
+     * found in the unloading chunk. Built fresh from {@link #sessions} on every call rather than
+     * maintained incrementally, since sessions start and end continuously and this is cheap
+     * relative to a chunk unload (bounded by the number of concurrently flying riders, not by
+     * chunk or world size). Read-only: does not touch {@link #sessions} or any other state.
+     */
+    public Map<UUID, UUID> activeSessionEntityOwners() {
+        if (sessions.isEmpty()) {
+            return Map.of();
+        }
+        Map<UUID, UUID> owners = new HashMap<>();
+        for (CarpetSession session : sessions.values()) {
+            UUID playerId = session.playerId();
+            Entity mount = session.mount();
+            if (mount != null) {
+                owners.put(mount.getUniqueId(), playerId);
+            }
+            for (UUID visualId : session.visual().entityIds()) {
+                owners.put(visualId, playerId);
+            }
+        }
+        return owners;
     }
 
     private void endSession(Player player, CarpetSession session, DismissCause cause) {
