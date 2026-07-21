@@ -128,17 +128,47 @@ blockers for a meaningful gate 7a Bedrock test):
 ## 2. Repository
 
 - [ ] Repository is `carmelosantana/minecraft-magic-carpet` with an SSH `origin` and `main` branch.
-- [ ] Existing user-owned worktree changes were identified and preserved.
-- [ ] No `herobrinesystems` references remain in source, metadata, workflows, remotes, or documentation.
+      **Local `main` exists with commit `2f570df`, identity `Carmelo Santana <me@carmelosantana.com>`.
+      The GitHub repository does not exist yet: `gh repo create` was blocked by the harness
+      permission classifier on 2026-07-21, not by this plugin's `autonomous` setting. No `origin`
+      remote is configured. Awaiting operator action — see §2 evidence below.**
+- [x] Existing user-owned worktree changes were identified and preserved.
+      Working directory was empty apart from `docs/` written by gate 1; nothing to preserve.
+- [x] No `herobrinesystems` references remain in source, metadata, workflows, remotes, or documentation.
+      `rg -n 'herobrinesystems' . --hidden -g '!target/**' -g '!.git/**'` returns exactly one match:
+      this checklist's own gate-2 checkbox text. Confirmed identical in `timber-blast` and
+      `electric-furnace`, i.e. template text, not a reference.
+
+**Gate 2 evidence.** Files committed (9): `LICENSE`, `README.md`, `pom.xml`, `.gitignore`,
+`.github/workflows/build.yml`, `src/main/resources/plugin.yml`,
+`src/main/java/org/xpfarm/magiccarpet/MagicCarpetPlugin.java`, `docs/PLUGIN_CHECKLIST.md`,
+`docs/superpowers/specs/2026-07-21-magic-carpet-design.md`.
+
+To finish gate 2, run:
+
+```bash
+gh repo create carmelosantana/minecraft-magic-carpet --public --source=. --remote=origin \
+  --description "Enchanted rug carried in the off-hand: jump to unfurl it, fly where you look, sneak back down to stow it"
+git push -u origin main
+```
 
 ## 3. Metadata
 
-- [ ] AGPL-3.0-or-later `LICENSE` and Maven license metadata are present and consistent.
-- [ ] `https://xpfarm.org` metadata and Carmelo Santana author metadata are present.
-- [ ] `play.xpfarm.org` is recorded as the public Minecraft server hostname where server identity is documented.
-- [ ] New work uses the `org.xpfarm` Maven group, or an existing-coordinate compatibility decision is documented.
-- [ ] Repository slug, artifact, releasable JAR, updater destination, and `plugin.yml` names are consistent.
-- [ ] No secrets committed in source, defaults, tests, logs, history, or documentation.
+- [x] AGPL-3.0-or-later `LICENSE` and Maven license metadata are present and consistent.
+      Full 661-line AGPL-3.0 text; `pom.xml` `<licenses>` names "GNU Affero General Public License
+      v3.0 or later" at `https://www.gnu.org/licenses/agpl-3.0.html`.
+- [x] `https://xpfarm.org` metadata and Carmelo Santana author metadata are present.
+      `pom.xml` `<url>` and `<developers>`; `plugin.yml` `author` and `website`.
+- [x] `play.xpfarm.org` is recorded as the public Minecraft server hostname where server identity is documented.
+      `README.md` — "Play it on `play.xpfarm.org` (Java Edition and Bedrock Edition via Geyser)."
+- [x] New work uses the `org.xpfarm` Maven group, or an existing-coordinate compatibility decision is documented.
+      `org.xpfarm:magic-carpet:0.1.0`. No compatibility carve-out needed — this is new work.
+- [x] Repository slug, artifact, releasable JAR, updater destination, and `plugin.yml` names are consistent.
+      slug `magic-carpet` · project `<artifactId>magic-carpet</artifactId>` · JAR
+      `magic-carpet-0.1.0.jar` · updater destination `magic-carpet.jar` · `plugin.yml` name
+      `MagicCarpet` · package `org.xpfarm.magiccarpet`.
+- [x] No secrets committed in source, defaults, tests, logs, history, or documentation.
+      No credentials, tokens, private endpoints, or production configuration in any of the 9 files.
 
 ## 4. Compatibility
 
@@ -168,9 +198,15 @@ blockers for a meaningful gate 7a Bedrock test):
 
 ## 8. CI/CD
 
-- [ ] Identical standard plugin Actions workflow is installed with the required triggers, Temurin 25 build, artifact, checksum, and release behavior.
+- [x] Identical standard plugin Actions workflow is installed with the required triggers, Temurin 25 build, artifact, checksum, and release behavior.
+      `.github/workflows/build.yml` copied verbatim; `diff` against `timber-blast`,
+      `electric-furnace`, `wild-weather-update` and `curse` reports byte-identical. Includes the
+      bare-filename `SHA256SUMS.txt` generation required by `GITHUB_ACTIONS.md`.
 - [ ] Successful main Actions run is recorded before tagging.
-- [ ] Workflow permissions contain no broader access than the documented contract.
+      Cannot run: the GitHub repository does not exist yet (see §2). This box belongs to
+      `minecraft-plugin-release` regardless.
+- [x] Workflow permissions contain no broader access than the documented contract.
+      `permissions: contents: write` only.
 
 ## 9. Release
 
