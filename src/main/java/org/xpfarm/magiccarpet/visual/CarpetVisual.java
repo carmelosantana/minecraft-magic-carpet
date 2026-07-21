@@ -10,6 +10,8 @@
 package org.xpfarm.magiccarpet.visual;
 
 import java.util.Collection;
+import java.util.List;
+import java.util.UUID;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.entity.BlockDisplay;
@@ -167,6 +169,15 @@ public final class CarpetVisual {
     public void remove() {
         removeIfAlive(javaVisual);
         removeIfAlive(bedrockVisual);
+    }
+
+    /**
+     * The UUIDs of both visual entities, regardless of whether they are still alive. Used by
+     * {@code CarpetManager.sweepOrphans} to distinguish a live session's own tagged entities
+     * from genuinely orphaned ones left behind by a crash.
+     */
+    public Collection<UUID> entityIds() {
+        return List.of(javaVisual.getUniqueId(), bedrockVisual.getUniqueId());
     }
 
     /**

@@ -32,9 +32,16 @@ public interface FlightMode {
     /**
      * Starts flight for {@code player} at {@code at}.
      *
-     * @return the spawned mount entity for {@link SeatedFlightMode}, or {@code null} for
-     *     {@link StandingFlightMode}, which has no mount. Callers must handle a {@code null}
-     *     return.
+     * @return the {@link Entity} that {@code CarpetVisual} should attach its two passengers
+     *     to: for {@link SeatedFlightMode} this is the {@link org.bukkit.entity.ArmorStand}
+     *     mount the player also rides; for {@link StandingFlightMode} this is a separate
+     *     marker {@link org.bukkit.entity.ArmorStand} anchor dedicated to carrying the visual
+     *     — the player is never made a passenger of anything in that mode, since doing so
+     *     would force the seated pose it exists to avoid. Both modes return {@code null} only
+     *     in the shared degenerate case where {@code at} has no {@link org.bukkit.World} to
+     *     spawn into; callers must still handle a {@code null} return, but on any successfully
+     *     registered session the returned entity — and therefore {@code
+     *     CarpetSession.mount()} — is non-null for both modes.
      * @throws IllegalStateException if {@code player} already has a tracked session with this
      *     mode instance that {@link #dismiss} has not cleared. The exact tracking condition
      *     differs by mode: {@link StandingFlightMode} throws whenever any entry for the player

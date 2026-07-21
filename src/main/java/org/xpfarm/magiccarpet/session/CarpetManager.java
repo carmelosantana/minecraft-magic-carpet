@@ -11,9 +11,11 @@ package org.xpfarm.magiccarpet.session;
 
 import io.papermc.paper.entity.TeleportFlag;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Level;
@@ -47,17 +49,18 @@ import org.xpfarm.magiccarpet.visual.EditionResolver;
  * any one session — gates how long the flight can last.
  *
  * <p><strong>Visual host resolution.</strong> {@link CarpetVisual} always needs a live {@link
- * Entity} to attach its two passengers to. {@code SeatedFlightMode.deploy} supplies one (the
- * ArmorStand mount); {@code StandingFlightMode.deploy} returns {@code null} by design — it has
- * no mount, because the whole point of that mode is that the client flies the player itself.
- * In that case this class attaches the visual to the {@link Player} directly: a player is a
- * plain {@link Entity} like any other and can carry passengers, and doing so satisfies the
- * design's "the visual tracking the player" requirement in standing mode for free, since the
- * visual then simply moves with whatever entity carries it — no per-tick teleport of a
- * separate anchor entity is needed. {@link CarpetSession#mount()} still stores exactly what
- * {@code FlightMode.deploy} returned (nullable, as documented there); the player-as-visual-host
- * substitution is a local decision made only where a visual host is needed, not persisted as
- * the session's mount.
+ * Entity} to attach its two passengers to, and both {@code FlightMode} implementations supply
+ * one directly from {@code deploy}: {@code SeatedFlightMode} the ArmorStand mount the player
+ * also rides, {@code StandingFlightMode} a dedicated marker ArmorStand anchor that carries only
+ * the visual (see that class's Javadoc for why the player itself is never used as the visual
+ * host — {@code CarpetVisual}'s translation offset is calibrated for a marker ArmorStand's
+ * passenger attachment, not a full-size {@link Player}'s, and the design specifies both visuals
+ * as passengers of an ArmorStand). Both modes return {@code null} from {@code deploy} only in
+ * the shared degenerate case where the deploy {@link Location} has no {@link
+ * org.bukkit.World}; that case never reaches session registration (see {@link #deploy}), so
+ * {@link CarpetSession#mount()} is guaranteed non-null for every session that actually exists,
+ * for both modes — no {@code mount != null ? mount : player} substitution is needed anywhere
+ * in this class.
  *
  * <p><strong>Tick guarding.</strong> The repeating task runs at 1-tick period. Each player's
  * slice of the tick body is wrapped in its own {@code try/catch}: an exception there is logged
@@ -189,10 +192,9 @@ public final class CarpetManager {
             return false;
         }
 
-        Entity visualHost = mount != null ? mount : player;
         CarpetVisual visual;
         try {
-            visual = new CarpetVisual(plugin, editionResolver, visualHost);
+            visual = new CarpetVisual(plugin, editionResolver, mount);
         } catch (RuntimeException e) {
             plugin.getLogger().log(Level.WARNING,
                     "Carpet visual failed to spawn for " + player.getName()
@@ -214,7 +216,13 @@ public final class CarpetManager {
         if (world != null) {
             visual.refreshViewers(new ArrayList<>(world.getPlayers()));
         }
-        playDeployEffects(activeConfig, at);
+        try {
+            playDeployEffects(activeConfig, at);
+        } catch (RuntimeException e) {
+            plugin.getLogger().log(Level.WARNING,
+                    "Failed to play carpet deploy effects for " + player.getName()
+                            + "; the session was still started successfully", e);
+        }
         return true;
     }
 
@@ -257,7 +265,13 @@ public final class CarpetManager {
                             + " while dismissing (" + cause + ")", e);
         }
         restoreOffHandIfEmpty(player);
-        playStowEffects(this.config, player.getLocation());
+        try {
+            playStowEffects(this.config, player.getLocation());
+        } catch (RuntimeException e) {
+            plugin.getLogger().log(Level.WARNING,
+                    "Failed to play carpet stow effects for " + player.getName()
+                            + " while dismissing (" + cause + ")", e);
+        }
     }
 
     /**
@@ -303,10 +317,14 @@ public final class CarpetManager {
      *
      * <p>Each session's slice of this method runs inside its own {@code try/catch}: an
      * exception there is logged once with that player's name and ends only that one session
-     * (via {@link DismissCause#SHUTDOWN} — see that constant's Javadoc for why), never
+     * (via {@link DismissCause#ERROR} — see that constant's Javadoc for why), never
      * propagating out of this method. An uncaught exception escaping a Bukkit repeating task
      * silently cancels the task forever, which would end carpet flight for every rider on the
-     * server, not just the one whose tick threw.
+     * server, not just the one whose tick threw. The recovery {@link #dismiss} call itself is
+     * also guarded: teardown code can throw too (see {@link #endSession}'s callers), and a
+     * second exception from the recovery path must not be allowed to escape this method either
+     * — it falls back to {@link #forceRemoveSession}, which only touches raw entity references
+     * and cannot itself depend on the teardown path that just failed.
      */
     public void tick() {
         for (Map.Entry<UUID, CarpetSession> entry : sessions.entrySet()) {
@@ -324,7 +342,15 @@ public final class CarpetManager {
                 plugin.getLogger().log(Level.WARNING,
                         "Unhandled exception while ticking carpet flight for " + player.getName()
                                 + "; ending their session", e);
-                dismiss(player, DismissCause.SHUTDOWN);
+                try {
+                    dismiss(player, DismissCause.ERROR);
+                } catch (RuntimeException dismissFailure) {
+                    plugin.getLogger().log(Level.SEVERE,
+                            "Failed to cleanly end carpet flight for " + player.getName()
+                                    + " after an earlier tick exception; forcing entity removal directly",
+                            dismissFailure);
+                    forceRemoveSession(id, session);
+                }
             }
         }
 
@@ -382,15 +408,26 @@ public final class CarpetManager {
     }
 
     /**
-     * Clamps the flying entity (the mount in seated mode, the player themself in standing
-     * mode) to {@code FlightGuard.clampAltitude}'s ceiling, teleporting it down if it climbed
-     * above that. Always uses {@code RETAIN_PASSENGERS}: in seated mode that keeps the player
-     * seated through the correction, and in standing mode it keeps the {@link CarpetVisual}
-     * (attached as the player's own passenger — see the class Javadoc) from detaching.
+     * Clamps the flying entity to {@code FlightGuard.clampAltitude}'s ceiling, teleporting it
+     * down if it climbed above that. Always uses {@code RETAIN_PASSENGERS}: in seated mode that
+     * keeps the player seated through the correction.
+     *
+     * <p><strong>Which entity is "flying" is mode-dependent, and — since both modes now return
+     * a non-null entity from {@code deploy} — is decided by comparing {@link
+     * CarpetSession#mode()} against this manager's own {@code seatedFlightMode} field, not by
+     * a {@code mount != null} check.</strong> In seated mode the mount carries the player as
+     * its passenger, so clamping the mount's Y also moves the player; the player is never
+     * clamped directly. In standing mode the opposite is true: the player is client-driven and
+     * carries no one, so the player is clamped directly, and the visual anchor — which carries
+     * no gameplay state, only the {@link CarpetVisual} passengers — is deliberately left alone
+     * here. {@code StandingFlightMode.tick} re-teleports the anchor to the player's (now
+     * corrected) location on the very next tick, so a clamp lags the visual by at most one tick;
+     * clamping the anchor instead would leave the player themself above the ceiling while only
+     * the decoration snapped down, which is the actual bug this comparison avoids.
      */
     @SuppressWarnings("deprecation") // TeleportFlag.EntityState: see SeatedFlightMode's note.
     private void applyAltitudeCeiling(Player player, CarpetSession session) {
-        Entity flyer = session.mount() != null ? session.mount() : player;
+        Entity flyer = session.mode() == seatedFlightMode ? session.mount() : player;
         if (flyer.isDead() || !flyer.isValid()) {
             return;
         }
@@ -409,6 +446,14 @@ public final class CarpetManager {
      * own internal bookkeeping); falls back to removing the session's own entity references
      * directly for the — expected to be unreachable in practice — case where {@link
      * Bukkit#getPlayer(UUID)} already returns {@code null} during shutdown.
+     *
+     * <p>The {@link #dismiss} call is itself guarded per session: teardown code (the visual's
+     * removal, the stow effects, and the {@code FlightMode}'s own dismiss) can throw despite
+     * best efforts elsewhere to prevent it, and one bad session must not abort this loop and
+     * leak every remaining rider's mount and visual — the exact moment cleanup matters most,
+     * since nothing will sweep them until the next {@code onEnable()}. A session whose normal
+     * {@link #dismiss} throws falls back to {@link #forceRemoveSession} for that one session
+     * only, and the loop continues to the next.
      */
     public void shutdownAll() {
         for (UUID id : new ArrayList<>(sessions.keySet())) {
@@ -418,7 +463,14 @@ public final class CarpetManager {
             }
             Player player = Bukkit.getPlayer(id);
             if (player != null) {
-                dismiss(player, DismissCause.SHUTDOWN);
+                try {
+                    dismiss(player, DismissCause.SHUTDOWN);
+                } catch (RuntimeException e) {
+                    plugin.getLogger().log(Level.SEVERE,
+                            "Failed to cleanly dismiss carpet flight for " + player.getName()
+                                    + " during shutdown; forcing entity removal directly", e);
+                    forceRemoveSession(id, session);
+                }
             } else {
                 forceRemoveSession(id, session);
             }
@@ -454,23 +506,44 @@ public final class CarpetManager {
     }
 
     /**
-     * Scans every loaded world for entities carrying the {@code magiccarpet} scoreboard tag
-     * and removes them, returning how many were found. Meant to be called once from {@code
+     * Scans every loaded world for entities carrying the {@code magiccarpet} scoreboard tag,
+     * skips any that belong to a currently active session, and removes the rest — returning
+     * how many were actually removed (an entity whose {@code remove()} itself throws is logged
+     * and does not count, and does not stop the sweep). Meant to be called once from {@code
      * onEnable()}, after any previous run of the plugin may have crashed mid-flight and left
      * mounts or visuals behind with nothing left tracking them.
+     *
+     * <p>In ordinary operation there is no live session yet when this runs (it is an {@code
+     * onEnable()}-time call, before any player has deployed a carpet this server run), so the
+     * active-session check below is a defensive guard against a future caller invoking this
+     * outside that window, not a case exercised today: without it, calling this while a rider's
+     * mount or visual happens to still be tagged would strip a live carpet out from under them.
      */
     public int sweepOrphans() {
+        Set<UUID> protectedIds = new HashSet<>();
+        for (CarpetSession session : sessions.values()) {
+            Entity mount = session.mount();
+            if (mount != null) {
+                protectedIds.add(mount.getUniqueId());
+            }
+            protectedIds.addAll(session.visual().entityIds());
+        }
+
         int removed = 0;
         for (World world : plugin.getServer().getWorlds()) {
             for (Entity entity : world.getEntities()) {
-                if (entity.getScoreboardTags().contains(ORPHAN_TAG)) {
-                    try {
-                        entity.remove();
-                        removed++;
-                    } catch (RuntimeException e) {
-                        plugin.getLogger().log(Level.WARNING,
-                                "Failed to remove orphaned carpet entity " + entity.getUniqueId(), e);
-                    }
+                if (!entity.getScoreboardTags().contains(ORPHAN_TAG)) {
+                    continue;
+                }
+                if (protectedIds.contains(entity.getUniqueId())) {
+                    continue; // belongs to a live session; not an orphan
+                }
+                try {
+                    entity.remove();
+                    removed++;
+                } catch (RuntimeException e) {
+                    plugin.getLogger().log(Level.WARNING,
+                            "Failed to remove orphaned carpet entity " + entity.getUniqueId(), e);
                 }
             }
         }
@@ -522,13 +595,18 @@ public final class CarpetManager {
         /** The player died while flying. */
         DEATH,
         /**
-         * The plugin ended the session unrequested: either {@link CarpetManager#shutdownAll()}
-         * tearing down every session on plugin disable, or — reused for lack of a dedicated
-         * "internal error" constant in this fixed set — the tick loop's own per-player guard
-         * forcibly ending a session after catching an unexpected exception from it. Both cases
-         * share the same shape: the plugin itself, not the player or an event, decided this
-         * session could not continue.
+         * {@link CarpetManager#shutdownAll()} tore down every session because the plugin is
+         * disabling. Distinct from {@link #ERROR}: this cause means the whole server or plugin
+         * is going down, not that one rider's session hit a bug — do not conflate the two in a
+         * message or metric.
          */
-        SHUTDOWN
+        SHUTDOWN,
+        /**
+         * The tick loop's own per-player guard forcibly ended this one session after catching
+         * an unexpected exception from it (see {@link CarpetManager#tick()}). Distinct from
+         * {@link #SHUTDOWN}: this is an isolated bug affecting one rider, not the plugin or
+         * server shutting down, and a future message or metric must not report it as such.
+         */
+        ERROR
     }
 }
