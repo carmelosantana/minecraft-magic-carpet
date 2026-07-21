@@ -1,0 +1,76 @@
+/*
+ * MagicCarpet - strategy interface for the two ways a carpet can carry a flying player.
+ * Copyright (C) 2026 Carmelo Santana
+ *
+ * This program is free software: you can redistribute it and/or modify it under the
+ * terms of the GNU Affero General Public License as published by the Free Software
+ * Foundation, either version 3 of the License, or (at your option) any later version.
+ * See the LICENSE file at the project root for the full license text.
+ */
+package org.xpfarm.magiccarpet.flight;
+
+import org.bukkit.Input;
+import org.bukkit.Location;
+import org.bukkit.entity.Entity;
+import org.bukkit.entity.Player;
+import org.xpfarm.magiccarpet.config.MagicCarpetConfig;
+
+/**
+ * One of the two movement strategies behind carpet flight: {@link SeatedFlightMode}, where
+ * the player rides a server-driven mount and renders in the seated animation, or
+ * {@link StandingFlightMode}, where the client's own creative-style flight drives movement
+ * and the player renders standing. The two cannot be merged into one implementation — see
+ * each class's Javadoc for why.
+ *
+ * <p>{@link #tick} receives an already-polled {@link Input}; implementations must not call
+ * {@link Player#getCurrentInput()} themselves. The caller (the carpet manager) polls once per
+ * player per tick and passes the same {@code Input} to whichever mode is active, so the mode
+ * stays free of that dependency and is not double-polled.
+ */
+public interface FlightMode {
+
+    /**
+     * Starts flight for {@code player} at {@code at}.
+     *
+     * @return the {@link Entity} that {@code CarpetVisual} should attach its two passengers
+     *     to: for {@link SeatedFlightMode} this is the {@link org.bukkit.entity.ArmorStand}
+     *     mount the player also rides; for {@link StandingFlightMode} this is a separate
+     *     marker {@link org.bukkit.entity.ArmorStand} anchor dedicated to carrying the visual
+     *     — the player is never made a passenger of anything in that mode, since doing so
+     *     would force the seated pose it exists to avoid. Both modes return {@code null} only
+     *     in the shared degenerate case where {@code at} has no {@link org.bukkit.World} to
+     *     spawn into; callers must still handle a {@code null} return, but on any successfully
+     *     registered session the returned entity — and therefore {@code
+     *     CarpetSession.mount()} — is non-null for both modes.
+     * @throws IllegalStateException if {@code player} already has a tracked session with this
+     *     mode instance that {@link #dismiss} has not cleared. The exact tracking condition
+     *     differs by mode: {@link StandingFlightMode} throws whenever any entry for the player
+     *     remains in its internal map — {@code dismiss} clears that entry unconditionally,
+     *     before it even attempts to restore the player's flight flags, so a lingering entry
+     *     can only mean {@code dismiss} was never called, not that it failed. {@link
+     *     SeatedFlightMode} throws only when a previously tracked mount is both present
+     *     <em>and</em> still alive/valid; a tracked-but-dead mount (e.g. removed by a world
+     *     unload) does not throw and is silently replaced. {@link SeatedFlightMode} additionally
+     *     throws if the newly spawned mount rejects the player as a passenger. Callers must not
+     *     assume deploy always succeeds silently: a caught exception means no session was
+     *     started and (for {@link SeatedFlightMode}) any entity spawned during the attempt has
+     *     already been cleaned up. Note the throw can fire on a call that looks like a fresh
+     *     deploy from the caller's perspective — e.g. calling {@code deploy} twice in a row for
+     *     the same player without an intervening {@code dismiss} — it is not limited to
+     *     obviously-repeated calls.
+     */
+    Entity deploy(Player player, Location at);
+
+    /**
+     * Advances flight by one movement step using the already-polled {@code input}. Altitude
+     * ceiling enforcement is the caller's responsibility, not this method's — it only moves.
+     */
+    void tick(Player player, Input input, MagicCarpetConfig config);
+
+    /**
+     * Stops flight and restores whatever normal player state this mode changed. Must be
+     * idempotent and must not throw for a player who is offline, already dismounted, or was
+     * never deployed through this mode instance.
+     */
+    void dismiss(Player player);
+}
