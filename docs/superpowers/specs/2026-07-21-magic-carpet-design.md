@@ -313,6 +313,20 @@ an owner:
    never updated by the 26.2 bump, and it should not be trusted. Either pin
    Geyser to 2.10.1-b1184 or move the stack to Paper 26.2. Whether ViaVersion can
    bridge the gap is **unverified**.
+
+   > **SUPERSEDED `2026-07-21` — investigated, not a break, no action taken.** The
+   > original text above is left intact as the historical record; do not act on it.
+   > The 776-vs-775 gap is real, but ViaVersion is Geyser's *own* designed
+   > mechanism for it: `GeyserSpigotVersionChecker.checkForSupportedProtocol`
+   > delegates entirely to ViaVersion when present and never compares protocols
+   > itself, and Geyser's own locale string instructs users to *"install
+   > ViaVersion"* when it is absent. ViaVersion 5.11.0 registers both
+   > `775 -> "26.1-26.1.2"` and `776 -> "26.2"`. `getJavaVersions()` is
+   > `List.of(codec.getMinecraftVersion(), "26.1.1", "26.1.2")` — a dynamic first
+   > element plus a maintained down-level list, not a stale string — and the `26.x`
+   > values in `GameProtocol` are **Bedrock** versions, the likely source of the
+   > misreading. Verified against the running JAR's bytecode, clean boot logs, and a
+   > live production Bedrock ping. See the toolkit's `CURRENT_STATE.md`.
 2. **`api-version` is stale in the toolkit template.** The template specifies
    `'1.21'`. The valid range is now 1.13–26.2, and `Commodore` silently rewrites
    `Cow`→`AbstractCow` and `Slime`→`AbstractCubeMob` for plugins below those

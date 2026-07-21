@@ -18,8 +18,9 @@ Maven coordinates: `org.xpfarm:magic-carpet`. Package: `org.xpfarm.magiccarpet`.
 `plugin.yml` name: `MagicCarpet`. Releasable JAR: `magic-carpet-<version>.jar`.
 Command: `/carpet` (alias `/magiccarpet`).
 
-**`api-version` deviates from the template**: this plugin uses `'26.1'`, not
-`'1.21'`. See §1 Known limitations and the design doc §9.
+**`api-version` is `'26.1'`.** This was a deliberate deviation when written; the
+toolkit template was changed to `'26.1'` on `2026-07-21`, so it is now simply the
+standard. See `PLUGIN_LIFECYCLE.md` §4 and the design doc §9.
 
 Full design: [docs/superpowers/specs/2026-07-21-magic-carpet-design.md](superpowers/specs/2026-07-21-magic-carpet-design.md)
 
@@ -120,18 +121,19 @@ Out of scope for v1:
 Ecosystem items needing an owner (not blockers for this plugin's gates 2–6, but
 blockers for a meaningful gate 7a Bedrock test):
 
-- **Geyser version mismatch.** Geyser 2.11.0 (build 1185+, since 2026-07-10) speaks Java protocol 776 = MC 26.2; the server runs Paper 26.1.2. The last Geyser genuinely supporting 26.1.x is **2.10.1 build 1184**. Geyser's own `getJavaVersions()` still lists 26.1.2 — a stale leftover from the 26.2 bump, not to be trusted. Pin Geyser or move the stack to Paper 26.2. Whether ViaVersion bridges it is **unverified**.
-- **Toolkit template `api-version`.** The template specifies `'1.21'`; valid range is now 1.13–26.2, and `Commodore` silently rewrites `Cow`→`AbstractCow` and `Slime`→`AbstractCubeMob` below those thresholds. Harmless here, but the template should be revisited.
+- ~~**Geyser version mismatch.**~~ **Not a break — resolved `2026-07-21`, no action taken.** The protocol gap is real (Geyser 2.11.0-b1200's codec is `protocolVersion(776).minecraftVersion("26.2")`; Paper 26.1.2 is 775) but it does not break Bedrock, and **neither remediation was applied**. ViaVersion is Geyser's own designed mechanism for this: `GeyserSpigotVersionChecker.checkForSupportedProtocol` delegates entirely to ViaVersion when present and never compares protocols itself, and Geyser's own message tells you to *"install ViaVersion"* when it is absent. ViaVersion 5.11.0 registers both `775 -> "26.1-26.1.2"` and `776 -> "26.2"`, so the check passes; `use-direct-connection: true` also means no Java handshake is negotiated over a socket. Two stacks booted clean on this combination with zero exceptions and none of Geyser's ViaVersion warnings, and production answers a Bedrock RakNet ping. Three claims in the original note were wrong: 2.11.0 explicitly declares 26.1.1/26.1.2; `getJavaVersions()` is `List.of(codec.getMinecraftVersion(), "26.1.1", "26.1.2")` — a dynamic first element plus a maintained down-level list, not a stale string; and the `26.x` values in `GameProtocol` are **Bedrock** versions (codecs `v924`–`v1001`), which is likely what was misread as a Java 26.2. Full write-up in the toolkit's `CURRENT_STATE.md`. **Gate 7a Bedrock testing is unblocked.**
+- ~~**Toolkit template `api-version`.**~~ **Resolved `2026-07-21`** — the template, `PLUGIN_LIFECYCLE.md` §4, and the `ecosystem`/`dev`/`scaffold` skills now specify `'26.1'`. Two details in the original note were wrong when checked against Paper 26.1.2 build 74 directly: the accepted upper bound is `26.1.2` (`apiVersioning.json`'s `currentApiVersion`), not `26.2`, so `'26.2'` would be *rejected*; and there is **no** `Slime`→`AbstractCubeMob` rewrite on this build — no such type exists in the API, `Commodore` has no `Slime` entry, and `MagmaCube extends Slime` still holds. The `Cow`→`AbstractCow` rewrite is real, gated at `ApiVersion.ABSTRACT_COW` = `1.21.5`.
 
 **Withheld gates.** None. Status is `active`; all gates apply.
 
 ## 2. Repository
 
-- [ ] Repository is `carmelosantana/minecraft-magic-carpet` with an SSH `origin` and `main` branch.
-      **Local `main` exists with commit `2f570df`, identity `Carmelo Santana <me@carmelosantana.com>`.
-      The GitHub repository does not exist yet: `gh repo create` was blocked by the harness
-      permission classifier on 2026-07-21, not by this plugin's `autonomous` setting. No `origin`
-      remote is configured. Awaiting operator action — see §2 evidence below.**
+- [x] Repository is `carmelosantana/minecraft-magic-carpet` with an SSH `origin` and `main` branch.
+      `https://github.com/carmelosantana/minecraft-magic-carpet` — public, `main` default,
+      AGPL-3.0 detected by GitHub, `origin` =
+      `git@github.com:carmelosantana/minecraft-magic-carpet.git`. Created and pushed by the
+      operator on 2026-07-21 after `gh repo create` was denied by the harness permission
+      classifier (not by this plugin's `autonomous` setting).
 - [x] Existing user-owned worktree changes were identified and preserved.
       Working directory was empty apart from `docs/` written by gate 1; nothing to preserve.
 - [x] No `herobrinesystems` references remain in source, metadata, workflows, remotes, or documentation.
@@ -144,13 +146,10 @@ blockers for a meaningful gate 7a Bedrock test):
 `src/main/java/org/xpfarm/magiccarpet/MagicCarpetPlugin.java`, `docs/PLUGIN_CHECKLIST.md`,
 `docs/superpowers/specs/2026-07-21-magic-carpet-design.md`.
 
-To finish gate 2, run:
-
-```bash
-gh repo create carmelosantana/minecraft-magic-carpet --public --source=. --remote=origin \
-  --description "Enchanted rug carried in the off-hand: jump to unfurl it, fly where you look, sneak back down to stow it"
-git push -u origin main
-```
+First `main` Actions run: [29864113294](https://github.com/carmelosantana/minecraft-magic-carpet/actions/runs/29864113294)
+— **success**, 25s, 2026-07-21T20:03:12Z. Recorded here as gate 2 evidence only; the
+gate 8 "successful main run before tagging" box belongs to `minecraft-plugin-release`
+and stays unchecked.
 
 ## 3. Metadata
 
@@ -172,7 +171,7 @@ git push -u origin main
 
 ## 4. Compatibility
 
-- [ ] Java 25/Paper 26.1.2 build 74 compile succeeds and `plugin.yml` uses `api-version: '26.1'` (deliberate deviation from the template's `'1.21'` — see §1 Known limitations).
+- [ ] Java 25/Paper 26.1.2 build 74 compile succeeds and `plugin.yml` uses `api-version: '26.1'` (no longer a deviation — the template adopted `'26.1'` on `2026-07-21`; see `PLUGIN_LIFECYCLE.md` §4).
 - [ ] Hard dependencies, soft dependencies, optional APIs, and load ordering were reviewed and declared.
 - [ ] Geyser/Floodgate/ViaVersion review covers Bedrock-safe input, UI, inventory, identity, and protocol behavior.
 
