@@ -54,14 +54,31 @@ public final class SeatedFlightMode implements FlightMode {
     /**
      * Spawns the mount at {@code at} and adds {@code player} as its passenger.
      *
+     * <p>Two failure modes are guarded explicitly rather than left to silently corrupt {@link
+     * #mounts}: a rejected passenger attach (see {@link #deploy} throws doc) and a duplicate
+     * deploy for a player who already has a live mount tracked. Both are converted into a
+     * thrown {@link IllegalStateException} rather than a silent no-op, matching the precedent
+     * set by {@code CarpetVisual.attachPassenger} (task 5) for the identical
+     * {@code addPassenger} rejection case.
+     *
      * @return the spawned {@link ArmorStand}, or {@code null} if {@code at} has no world
      *     (a degenerate {@link Location} that cannot be spawned into)
+     * @throws IllegalStateException if {@code player} already has a live tracked mount (caller
+     *     must {@link #dismiss} first), or if the newly spawned mount rejects {@code player} as
+     *     a passenger — in the latter case the spawned {@link ArmorStand} is removed before the
+     *     exception propagates, so no orphaned entity or stale tracking entry is left behind
      */
     @Override
     public Entity deploy(Player player, Location at) {
         World world = at.getWorld();
         if (world == null) {
             return null;
+        }
+        UUID id = player.getUniqueId();
+        ArmorStand existing = mounts.get(id);
+        if (existing != null && !existing.isDead() && existing.isValid()) {
+            throw new IllegalStateException(
+                    "Player " + id + " already has an active seated-flight mount; dismiss before redeploying.");
         }
         ArmorStand stand = world.spawn(at, ArmorStand.class, s -> {
             s.setInvisible(true);
@@ -74,9 +91,29 @@ public final class SeatedFlightMode implements FlightMode {
             s.setPersistent(false);
             s.addScoreboardTag(MOUNT_TAG);
         });
-        stand.addPassenger(player);
-        mounts.put(player.getUniqueId(), stand);
+        if (!stand.addPassenger(player)) {
+            removeIfAlive(stand);
+            throw new IllegalStateException(
+                    "Mount " + stand.getUniqueId() + " rejected passenger " + id);
+        }
+        mounts.put(id, stand);
         return stand;
+    }
+
+    /**
+     * Removes {@code stand} if it is still alive, swallowing any exception {@code remove()}
+     * itself throws. Used only for cleaning up a just-spawned mount after a rejected passenger
+     * attach; a secondary exception here must never replace the original failure being
+     * propagated.
+     */
+    private static void removeIfAlive(ArmorStand stand) {
+        try {
+            if (!stand.isDead()) {
+                stand.remove();
+            }
+        } catch (RuntimeException ignored) {
+            // Best-effort cleanup only.
+        }
     }
 
     /**

@@ -42,13 +42,27 @@ public final class StandingFlightMode implements FlightMode {
      * assuming {@code false} — stripping flight from a creative-mode or already-flying player
      * would be a real regression, not a cosmetic one.
      *
-     * @return always {@code null}; this mode has no mount entity
+     * <p>Rejects a duplicate deploy for a player who already has a tracked prior state (i.e.
+     * no intervening {@link #dismiss}), rather than silently overwriting it: since this mode
+     * has already set {@code allowFlight}/{@code flying} to {@code true} from the first
+     * deploy, overwriting the recorded state on a second call would capture the already-flying
+     * values as "prior", and the eventual {@link #dismiss} would restore the wrong values. This
+     * mirrors {@link SeatedFlightMode#deploy}'s duplicate-deploy guard for consistency across
+     * both modes.
+     *
+     * @return always {@code null} on success; this mode has no mount entity. Note this is
+     *     indistinguishable from a {@code null} success return by return value alone — the
+     *     failure signal here is the thrown exception, not the return value.
+     * @throws IllegalStateException if {@code player} already has an active tracked session
      */
     @Override
     public Entity deploy(Player player, Location at) {
-        priorStates.put(
-                player.getUniqueId(),
-                new PriorFlightState(player.getAllowFlight(), player.isFlying()));
+        UUID id = player.getUniqueId();
+        if (priorStates.containsKey(id)) {
+            throw new IllegalStateException(
+                    "Player " + id + " already has an active standing-flight session; dismiss before redeploying.");
+        }
+        priorStates.put(id, new PriorFlightState(player.getAllowFlight(), player.isFlying()));
         player.setAllowFlight(true);
         player.setFlying(true);
         return null;
@@ -68,18 +82,34 @@ public final class StandingFlightMode implements FlightMode {
      * Restores the flight state recorded at {@link #deploy}. Safe to call for a player who is
      * offline, already dismissed, or was never deployed through this instance — all such
      * calls are no-ops.
+     *
+     * <p>The recorded state is discarded only after {@code setFlying}/{@code setAllowFlight}
+     * both complete without throwing. If either throws (e.g. the player object is no longer
+     * valid), the tracked entry is left intact so a later retry — once the player is reachable
+     * again — can still restore it, rather than silently discarding state that was never
+     * actually applied. This mirrors {@link SeatedFlightMode#dismiss}'s
+     * {@code try/catch (RuntimeException ignored)} guard for the identical "must not throw for
+     * an offline player" contract both modes share.
      */
     @Override
     public void dismiss(Player player) {
         if (player == null) {
             return;
         }
-        PriorFlightState prior = priorStates.remove(player.getUniqueId());
+        UUID id = player.getUniqueId();
+        PriorFlightState prior = priorStates.get(id);
         if (prior == null) {
             return;
         }
-        player.setFlying(prior.flying());
-        player.setAllowFlight(prior.allowFlight());
+        try {
+            player.setFlying(prior.flying());
+            player.setAllowFlight(prior.allowFlight());
+        } catch (RuntimeException ignored) {
+            // Best-effort restore: the player may be offline or otherwise unreachable. Leave
+            // the recorded state intact so a later retry can still restore it.
+            return;
+        }
+        priorStates.remove(id);
     }
 
     private record PriorFlightState(boolean allowFlight, boolean flying) {}

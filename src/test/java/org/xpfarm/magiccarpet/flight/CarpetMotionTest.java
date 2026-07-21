@@ -57,7 +57,28 @@ final class CarpetMotionTest {
     void sneakingAndJumpingTogetherCancelOutVertically() {
         Vector offset = CarpetMotion.nextOffset(new Vector(0, 0, 1), true, true, 0.5);
 
+        // The vertical components must cancel, but the horizontal cruise must survive: a
+        // regression that zeroed the whole vector (not just Y) would previously have passed
+        // this test with only the Y assertion.
         assertEquals(0.0, offset.getY(), DELTA);
+        assertEquals(0.0, offset.getX(), DELTA);
+        assertEquals(0.5, offset.getZ(), DELTA);
+    }
+
+    @Test
+    void jumpingWithLevelLookPinsTheFortyOnePercentDiagonalSpeedBoostQuirk() {
+        // Level look (0, 0, 1) plus jump held produces offset (0, speed, speed) -- magnitude
+        // speed * sqrt(2), about 41% faster than level cruise alone (magnitude speed). This is
+        // additive by design (see CarpetMotion class Javadoc) and NOT a bug: sneak/jump each
+        // add a fixed vertical component on top of the cruise vector rather than being folded
+        // into a single normalized direction. Retuning this is a gameplay/in-game-calibration
+        // decision, not a code fix -- this test only pins the current magnitude so a future
+        // change to it is deliberate, not accidental.
+        Vector offset = CarpetMotion.nextOffset(new Vector(0, 0, 1), false, true, 0.5);
+
+        assertEquals(0.5, offset.getY(), DELTA);
+        assertEquals(0.5, offset.getZ(), DELTA);
+        assertEquals(0.5 * Math.sqrt(2), offset.length(), DELTA);
     }
 
     @Test

@@ -35,6 +35,12 @@ public interface FlightMode {
      * @return the spawned mount entity for {@link SeatedFlightMode}, or {@code null} for
      *     {@link StandingFlightMode}, which has no mount. Callers must handle a {@code null}
      *     return.
+     * @throws IllegalStateException if {@code player} already has an active session with this
+     *     mode instance and was not {@link #dismiss}ed first, or (in {@link SeatedFlightMode}
+     *     only) if the mount rejects the player as a passenger. Callers must not assume deploy
+     *     always succeeds silently; a caught exception means no session was started and (for
+     *     {@link SeatedFlightMode}) any entity spawned during the attempt has already been
+     *     cleaned up.
      */
     Entity deploy(Player player, Location at);
 
