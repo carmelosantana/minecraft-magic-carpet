@@ -1,0 +1,44 @@
+# Flight behaviour: movement mode per client platform, speed, and altitude ceiling.
+flight:
+  # Rider stance for Java Edition players: 'seated' or 'standing'.
+  java-mode: seated
+  # Rider stance for Bedrock/Geyser players: 'seated' or 'standing'.
+  bedrock-mode: standing
+  # Horizontal flight speed in blocks per tick. Range: 0.05-2.0.
+  speed: 0.5
+  # Maximum altitude the carpet may climb to, in blocks above terrain. Range: 8-320.
+  altitude-ceiling: 64
+
+# Fuel tank governing how long a carpet can fly before it must recharge.
+fuel:
+  # Seconds of flight available on a full tank. Range: 5-3600.
+  capacity-seconds: 60
+  # Seconds needed to fully recharge an empty tank. Range: 5-3600.
+  recharge-seconds: 120
+
+# Combat interaction rules.
+combat:
+  # Whether taking damage knocks the rider off the carpet.
+  drop-on-damage: true
+  # Ticks after being knocked off before the carpet can be redeployed. Range: 0-1200.
+  grace-ticks: 40
+
+# Per-world restriction on where carpets may be used.
+worlds:
+  # 'allow-list' permits flight only in the listed worlds; 'deny-list' permits flight
+  # everywhere except the listed worlds.
+  mode: deny-list
+  # World names the configured mode applies to. Empty means no restriction either way.
+  list: []
+
+# WorldGuard integration.
+worldguard:
+  # Whether carpet flight respects WorldGuard region flags where WorldGuard is present.
+  respect-regions: true
+
+# Client-facing feedback while flying.
+effects:
+  # Whether particle effects are shown while flying.
+  particles: true
+  # Whether sound effects play while flying.
+  sound: true
