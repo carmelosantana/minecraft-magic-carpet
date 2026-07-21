@@ -46,6 +46,15 @@ import org.xpfarm.magiccarpet.config.MagicCarpetConfig;
  * <p>Altitude ceiling enforcement clamps the <em>player</em>, not the anchor, in this mode —
  * the anchor carries only the decoration, the player is what is actually flying — and belongs
  * to the caller (task 7's carpet manager), not this class.
+ *
+ * <p><strong>{@code flight.speed} does not apply to this mode.</strong> {@link #tick} does not
+ * read {@code config.flightSpeed()} at all — movement here is entirely native client flight at
+ * whatever speed the client's own flight ability moves at, not a server-computed offset the way
+ * {@link SeatedFlightMode#tick} uses it. {@code flight.speed} only affects seated mode. Mapping
+ * a blocks-per-tick value onto {@code Player#setFlySpeed} was deliberately not attempted here:
+ * that API is an unrelated abstract 0.0-1.0 scale, not blocks per tick, and a guessed conversion
+ * between the two would be worse than plainly documenting the gap — retuning standing-mode speed
+ * is a live-server tuning decision, not a code fix.
  */
 public final class StandingFlightMode implements FlightMode {
 

@@ -61,6 +61,18 @@ public final class FuelTank {
         return charge <= 0;
     }
 
+    /**
+     * True when the current charge is below {@code thresholdFraction} of full capacity (a value
+     * in {@code [0, 1]}, compared against {@link #fraction()}). Meant for gating a new deploy on
+     * "close enough to empty that starting a flight is not worthwhile," which is a strictly
+     * broader condition than {@link #isEmpty()} — a threshold above {@code 0.0} also rejects a
+     * tank that technically has a token amount of charge left but not enough to be worth the
+     * cost of spawning a mount and visuals for.
+     */
+    public boolean isBelowFraction(double thresholdFraction) {
+        return fraction() < thresholdFraction;
+    }
+
     /** Charge as a fraction of capacity, clamped to {@code [0, 1]} for a HUD/gauge. */
     public double fraction() {
         double value = charge / capacityTicks;

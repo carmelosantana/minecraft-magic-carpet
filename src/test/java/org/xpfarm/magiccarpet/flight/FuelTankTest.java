@@ -141,4 +141,43 @@ final class FuelTankTest {
 
         assertTrue(tank.isEmpty());
     }
+
+    @Test
+    void isBelowFractionIsFalseForAFullTank() {
+        FuelTank tank = new FuelTank(100, 50);
+
+        assertFalse(tank.isBelowFraction(0.05));
+    }
+
+    @Test
+    void isBelowFractionIsTrueForAnEmptyTank() {
+        FuelTank tank = new FuelTank(100, 50);
+        tank.drain(100);
+
+        assertTrue(tank.isBelowFraction(0.05));
+    }
+
+    @Test
+    void isBelowFractionIsTrueJustUnderTheThreshold() {
+        FuelTank tank = new FuelTank(100, 50);
+        tank.drain(96); // fraction = 0.04, just under a 0.05 threshold
+
+        assertTrue(tank.isBelowFraction(0.05));
+    }
+
+    @Test
+    void isBelowFractionIsFalseAtExactlyTheThreshold() {
+        FuelTank tank = new FuelTank(100, 50);
+        tank.drain(95); // fraction = 0.05 exactly: at the threshold, not below it
+
+        assertFalse(tank.isBelowFraction(0.05));
+    }
+
+    @Test
+    void isBelowFractionIsFalseJustAboveTheThreshold() {
+        FuelTank tank = new FuelTank(100, 50);
+        tank.drain(94); // fraction = 0.06, just above a 0.05 threshold
+
+        assertFalse(tank.isBelowFraction(0.05));
+    }
 }

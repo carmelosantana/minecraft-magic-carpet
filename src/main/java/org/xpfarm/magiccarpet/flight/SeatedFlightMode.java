@@ -128,6 +128,22 @@ public final class SeatedFlightMode implements FlightMode {
      * API offers for a passenger-preserving teleport; there is no replacement class in this
      * jar (verified by inspecting every {@code *Teleport*} class it ships). Suppressed
      * deliberately rather than switched to {@code setVelocity}, which is prohibited.
+     *
+     * <p><strong>Solid-block check before moving.</strong> A raw teleport does not collide —
+     * unlike vanilla movement, nothing stops it from placing the mount (and the seated player
+     * riding it) inside solid terrain, e.g. flying straight at a hillside. Before teleporting,
+     * this checks whether the destination block is solid and, if so, skips the teleport for this
+     * tick entirely: the carpet simply stops advancing rather than phasing into the block, and
+     * tries again next tick (so turning away or climbing over the obstruction resumes movement
+     * immediately, with no separate "stuck" state to track or clear). Deliberately a single block
+     * lookup at the destination only — not a multi-point check along the path and not a raycast —
+     * matching the same cheap-per-tick-per-rider budget the altitude ceiling's own terrain sample
+     * uses ({@code CarpetManager.terrainHeightAt}); a full sliding-along-the-surface response
+     * would need more lookups per tick for a marginal smoothness gain over a hard stop. This is
+     * untestable outside a running server the same way the rest of this class is: {@code
+     * Material#isSolid()} itself throws {@code IllegalStateException} ("No RegistryAccess
+     * implementation found") without a live Paper registry, confirmed by attempting exactly that
+     * call in a throwaway unit test.
      */
     @SuppressWarnings("deprecation")
     @Override
@@ -141,7 +157,21 @@ public final class SeatedFlightMode implements FlightMode {
                 CarpetMotion.nextOffset(direction, input.isSneak(), input.isJump(), config.flightSpeed());
         Location next = stand.getLocation().add(offset);
         next.setDirection(direction);
+        if (isBlocked(next)) {
+            return;
+        }
         stand.teleport(next, TeleportFlag.EntityState.RETAIN_PASSENGERS);
+    }
+
+    /**
+     * Whether {@code destination}'s block would obstruct the mount — true when its world's
+     * block there is solid. A {@code null} world (a degenerate {@link Location}, not expected in
+     * practice since {@code destination} is always derived from a live mount's own location) is
+     * treated as unobstructed rather than guessed at.
+     */
+    private static boolean isBlocked(Location destination) {
+        World world = destination.getWorld();
+        return world != null && world.getBlockAt(destination).getType().isSolid();
     }
 
     /**

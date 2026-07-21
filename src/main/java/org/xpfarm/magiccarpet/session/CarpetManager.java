@@ -75,6 +75,29 @@ public final class CarpetManager {
     private static final String ORPHAN_TAG = "magiccarpet";
     private static final int TICKS_PER_SECOND = 20;
 
+    /**
+     * Minimum fraction of a full tank a deploy requires (see {@link FuelTank#isBelowFraction}).
+     * 5%: small enough that it only rejects a deploy when there is genuinely nothing meaningful
+     * left to fly on (at the shortest allowed {@code fuel.capacity-seconds} of 5s, that is a
+     * quarter of a second of flight — not worth the entity/sound cost of even starting), while
+     * still being comfortably above zero so a rider whose tank reads "empty" from accumulated
+     * floating-point drain but is a rounding hair above true zero is not waved through only to
+     * have {@code FUEL_EMPTY} fire again next tick.
+     */
+    private static final double MIN_DEPLOY_FUEL_FRACTION = 0.05;
+
+    /**
+     * How often {@link #tickSession} re-broadcasts visual visibility to every player in the
+     * rider's world (see {@link #refreshVisualViewers}). Once per second (20 ticks), not every
+     * tick: {@link CarpetVisual#refreshViewers} is only correcting for players who joined,
+     * changed worlds, or otherwise were not in the original {@code deploy}-time snapshot — none
+     * of those are frame-perfect events a human could perceive the timing of, so a 1-second
+     * worst-case delay before a new arrival sees the rider seated on a visible carpet is
+     * unnoticeable, while still being far cheaper than doing this per-viewer show/hide call
+     * every single tick for every active session.
+     */
+    private static final int VIEWER_REFRESH_INTERVAL_TICKS = 20;
+
     private final Plugin plugin;
     private final EditionResolver editionResolver;
     private final FlightMode seatedFlightMode;
@@ -117,30 +140,39 @@ public final class CarpetManager {
      * not captured at deploy time, so already-flying riders pick up the new {@code
      * flight.speed} and {@code flight.altitude-ceiling} on their very next tick, and any
      * deploy attempted after this call uses the new world/region/permission rules immediately.
-     * Two things do <em>not</em> change retroactively: a session's {@link CarpetSession#mode()}
+     * One thing does <em>not</em> change retroactively: a session's {@link CarpetSession#mode()}
      * (the {@code FlightMode} strategy) is fixed at deploy time and does not switch mid-flight
-     * even if {@code flight.java-mode}/{@code flight.bedrock-mode} changes; and every {@link
-     * FuelTank} — both the ones backing an active session and the ones sitting idle in the
-     * per-player map from an earlier flight this server run — keeps the capacity and recharge
-     * rate it was constructed with, because {@link FuelTank} has no reconfigure method. A
-     * changed {@code fuel.capacity-seconds}/{@code fuel.recharge-seconds} only takes effect for
-     * a player whose {@link FuelTank} has not been created yet, i.e. someone who has not
-     * deployed a carpet since the last time their entry was cleared (see {@link
-     * #clearFuelTank(Player)}) or since server start.
+     * even if {@code flight.java-mode}/{@code flight.bedrock-mode} changes.
+     *
+     * <p><strong>Fuel tanks.</strong> {@link FuelTank} fixes its capacity and recharge rate at
+     * construction and has no reconfigure method, so a changed {@code fuel.capacity-seconds} /
+     * {@code fuel.recharge-seconds} cannot be applied to an existing {@link FuelTank} instance
+     * in place — it must be rebuilt. This method drops every entry from {@link #fuelTanks}
+     * <strong>except</strong> the ones backing a player who is flying right now (i.e. present in
+     * {@link #sessions}): dropping a grounded player's stale tank is safe, since {@link #deploy}
+     * lazily recreates it — from the config now in effect — the next time they fly, exactly as
+     * if their entry had never existed. Dropping an <em>active</em> rider's tank mid-flight would
+     * be worse than doing nothing: {@link #tick} would call {@code drain}/{@code isEmpty} on a
+     * brand-new full-capacity replacement, silently discarding whatever charge they had actually
+     * burned so far and handing them a free refill mid-air. So a currently-flying rider's tank is
+     * left completely untouched by a reload — same instance, same capacity, same recharge rate,
+     * same remaining charge — and only picks up the new fuel config on their <em>next</em>
+     * deploy, after landing.
      */
     public void applyConfig(MagicCarpetConfig config, FlightGuard flightGuard) {
         this.config = Objects.requireNonNull(config, "config");
         this.flightGuard = Objects.requireNonNull(flightGuard, "flightGuard");
+        fuelTanks.keySet().removeIf(id -> !sessions.containsKey(id));
     }
 
     /**
      * Attempts to start carpet flight for {@code player}.
      *
-     * <p>Order: already-flying guard, then {@link FlightGuard#checkDeploy}, then mode
-     * selection, then {@code mode.deploy}, then the visual. A denial from the guard sends the
-     * {@link DenyReason} message and returns {@code false} without touching anything else. A
-     * thrown {@link IllegalStateException} from {@code mode.deploy} or from the {@link
-     * CarpetVisual} constructor is caught, logged, and reported to the player as a plain
+     * <p>Order: already-flying guard, then {@link FlightGuard#checkDeploy}, then the fuel gate
+     * (below), then mode selection, then {@code mode.deploy}, then the visual. A denial from the
+     * guard sends the {@link DenyReason} message and returns {@code false} without touching
+     * anything else. A thrown {@link IllegalStateException} from {@code mode.deploy} or from the
+     * {@link CarpetVisual} constructor is caught, logged, and reported to the player as a plain
      * failure message; in both cases no session is registered and nothing is left half-built:
      *
      * <ul>
@@ -153,6 +185,23 @@ public final class CarpetManager {
      *       {@code dismiss} never throws and is idempotent for both modes, so this is safe
      *       even though the mount was never registered in a {@link CarpetSession}.
      * </ul>
+     *
+     * <p><strong>Fuel gate.</strong> A deploy is refused with a player-visible message when
+     * {@code player}'s {@link FuelTank} reads below {@link #MIN_DEPLOY_FUEL_FRACTION} of
+     * capacity — this is what stops a rider from jump-spamming a mount/visual spawn (three
+     * entities, two sounds, particles) all through a 120-second recharge after their fuel ran
+     * out mid-flight. Checked after the {@code FlightGuard} denial (so an out-of-fuel player in
+     * a world where they lack permission still sees the permission message, not a fuel one) and
+     * before anything is spawned.
+     *
+     * <p><strong>Off-hand rug.</strong> Once the mount and visual both exist, the exact {@link
+     * org.bukkit.inventory.ItemStack} in {@code player}'s off-hand is removed and stored on the
+     * new {@link CarpetSession} (see {@link CarpetSession#heldRug()}) — not a freshly created
+     * replacement. {@link #endSession} (via {@code returnRug}) hands that same instance back on
+     * dismiss, which is what actually closes the deploy/dismiss pair the design specifies;
+     * before this, {@code deploy} never touched the off-hand at all and dismiss unconditionally
+     * minted a new rug into any empty slot, which duplicated the item every time a rider emptied
+     * their off-hand mid-flight and then landed or ran out of fuel.
      *
      * @return {@code true} if a session was started
      */
@@ -178,6 +227,21 @@ public final class CarpetManager {
                 worldName, at.getBlockX(), at.getBlockY(), at.getBlockZ(), hasPermission);
         if (denial.isPresent()) {
             player.sendMessage(denial.get().message());
+            return false;
+        }
+
+        // Fuel gate: created lazily here (not only after a successful deploy) so the very first
+        // check a brand-new flier's tank ever gets is this one, at full capacity, which always
+        // passes. Checked before any mount/visual is spawned so a rider spamming jump on an
+        // empty tank (no combat grace after FUEL_EMPTY, see DenyReason's siblings) does not pay
+        // for three entities, two sounds, and particles on every keypress for the whole
+        // recharge window — see FuelTank.isBelowFraction's Javadoc for the threshold.
+        FuelTank fuelTank = fuelTanks.computeIfAbsent(id, unused -> new FuelTank(
+                secondsToTicks(activeConfig.fuelCapacitySeconds()),
+                secondsToTicks(activeConfig.fuelRechargeSeconds())));
+        if (fuelTank.isBelowFraction(MIN_DEPLOY_FUEL_FRACTION)) {
+            player.sendMessage(
+                    "Your carpet is out of fuel and is still recharging. Try again once it has refilled.");
             return false;
         }
 
@@ -208,11 +272,19 @@ public final class CarpetManager {
             return false;
         }
 
-        FuelTank fuelTank = fuelTanks.computeIfAbsent(id, unused -> new FuelTank(
-                secondsToTicks(activeConfig.fuelCapacitySeconds()),
-                secondsToTicks(activeConfig.fuelRechargeSeconds())));
+        // Close the deploy/dismiss pair: take the exact rug stack out of the off-hand now that
+        // the flight has actually started, and hold onto that same instance for the whole
+        // session. Deploy is only ever reached via CarpetListeners.onPlayerJump, which already
+        // verified the off-hand holds a carpet before calling this method — but this class does
+        // not re-check that itself (deploy() is public), so a defensive empty/air fallback is
+        // used if the slot is somehow already empty rather than assuming a carpet is there.
+        // Never re-synthesizes a new CarpetItem.create() here or on dismiss: see
+        // returnRug/peekHeldRug for why fabricating a replacement is exactly the bug this fixes.
+        ItemStack heldRug = player.getInventory().getItemInOffHand().clone();
+        player.getInventory().setItemInOffHand(new ItemStack(Material.AIR));
 
-        CarpetSession session = new CarpetSession(id, mode, mount, visual, fuelTank, at.getBlockY());
+        CarpetSession session =
+                new CarpetSession(id, mode, mount, visual, fuelTank, at.getBlockY(), heldRug);
         sessions.put(id, session);
 
         if (world != null) {
@@ -361,7 +433,7 @@ public final class CarpetManager {
                     "Failed to remove carpet visual for " + player.getName()
                             + " while dismissing (" + cause + ")", e);
         }
-        restoreOffHandIfEmpty(player);
+        returnRug(player, session, cause);
         try {
             playStowEffects(this.config, player.getLocation());
         } catch (RuntimeException e) {
@@ -372,26 +444,94 @@ public final class CarpetManager {
     }
 
     /**
-     * Puts a fresh carpet rug in {@code player}'s off-hand if it is currently empty.
+     * Gives back the exact rug {@link ItemStack} {@link #deploy} took out of {@code player}'s
+     * off-hand — never a freshly minted {@link CarpetItem#create()} replacement, which is what
+     * let a rug be duplicated: {@code deploy} never removed the original in the first place, so
+     * every dismiss minted a brand-new one regardless of whether the player still had the
+     * physical item. Now that {@code deploy} takes the rug and holds the exact instance on the
+     * {@link CarpetSession}, this is the other half of that pair, and it hands back that same
+     * instance every time — so any durability, NBT, or renamed-in-an-anvil state the physical
+     * item picked up survives the flight.
      *
-     * <p>Nothing in this class ever removes the rug from the off-hand — {@link #deploy} never
-     * touches the player's inventory at all, so in the ordinary case the off-hand already
-     * holds the rug and this is a no-op. It exists as a defensive guarantee that "the rug
-     * returns to the off-hand" is concretely true after every dismiss, in case something else
-     * (another plugin, an inventory click, a future consumable mechanic) cleared that slot
-     * during the flight. It only fills an <em>empty</em> slot: if the player swapped something
-     * else into their off-hand mid-flight, that item is left alone rather than overwritten.
+     * <p>A no-op if {@link CarpetSession#heldRug()} is air/empty — the defensive case where the
+     * off-hand was already empty at deploy time (see that field's Javadoc), meaning there is
+     * nothing to give back and nothing was ever taken.
+     *
+     * <p><strong>{@link DismissCause#DEATH} is deliberately skipped here.</strong> {@link
+     * CarpetListeners#onPlayerDeath} calls {@link #peekHeldRug} <em>before</em> calling {@link
+     * #dismiss}, then decides where the rug goes based on {@code PlayerDeathEvent.getKeepInventory()}
+     * — a value only that event exposes, which this class has no access to. If this method also
+     * tried to hand the rug back for a {@code DEATH} dismiss, the rug would be given out twice
+     * (once here, once by the listener) for every death.
+     *
+     * <p><strong>{@link DismissCause#QUIT} never writes to the inventory.</strong> A player is
+     * disconnecting; rather than risk an inventory mutation racing the client's disconnect (or
+     * simply not persisting cleanly), the rug is dropped into the world at their last location
+     * instead — the same fallback used below for "something else is already in the off-hand".
+     * Every other cause writes to the off-hand when it is empty, and falls back to a world drop
+     * when it is not (a rider who swapped something else into their off-hand mid-flight keeps
+     * that item; their rug lands at their feet rather than overwriting it or vanishing).
      */
-    private void restoreOffHandIfEmpty(Player player) {
+    private void returnRug(Player player, CarpetSession session, DismissCause cause) {
+        ItemStack rug = session.heldRug();
+        if (rug.getType() == Material.AIR || rug.getAmount() <= 0) {
+            return; // nothing was taken at deploy time; nothing to give back.
+        }
+        if (cause == DismissCause.DEATH) {
+            return; // CarpetListeners.onPlayerDeath handles this cause itself; see method doc.
+        }
         try {
+            if (cause == DismissCause.QUIT) {
+                dropRugAtFeet(player, rug);
+                return;
+            }
             ItemStack offHand = player.getInventory().getItemInOffHand();
             if (offHand == null || offHand.getType() == Material.AIR) {
-                player.getInventory().setItemInOffHand(CarpetItem.create());
+                player.getInventory().setItemInOffHand(rug);
+            } else {
+                dropRugAtFeet(player, rug);
             }
         } catch (RuntimeException e) {
             plugin.getLogger().log(Level.WARNING,
-                    "Failed to restore the carpet rug to the off-hand for " + player.getName(), e);
+                    "Failed to return the carpet rug to " + player.getName()
+                            + " while dismissing (" + cause + ")", e);
         }
+    }
+
+    private static void dropRugAtFeet(Player player, ItemStack rug) {
+        World world = player.getWorld();
+        if (world != null) {
+            world.dropItemNaturally(player.getLocation(), rug);
+        }
+    }
+
+    /**
+     * A defensive copy of the rug {@link ItemStack} held by {@code player}'s currently active
+     * session (see {@link CarpetSession#heldRug()}), or {@code null} if there is no active
+     * session or nothing was taken at deploy time.
+     *
+     * <p>Added so {@link CarpetListeners#onPlayerDeath} can retrieve the exact item before
+     * calling {@link #dismiss} — {@code dismiss} removes the session (and, for every other
+     * cause, would hand the rug straight back via {@link #returnRug}), but a death needs the
+     * item routed through {@code PlayerDeathEvent} itself: added to the off-hand directly when
+     * {@code event.getKeepInventory()} is {@code true}, or to {@code event.getDrops()} when it
+     * is {@code false}, so it participates correctly in whichever the death is already doing to
+     * the rest of the inventory instead of being written to a slot that is about to be cleared.
+     * Read-only: does not remove or alter anything this class tracks.
+     */
+    public ItemStack peekHeldRug(Player player) {
+        if (player == null) {
+            return null;
+        }
+        CarpetSession session = sessions.get(player.getUniqueId());
+        if (session == null) {
+            return null;
+        }
+        ItemStack rug = session.heldRug();
+        if (rug.getType() == Material.AIR || rug.getAmount() <= 0) {
+            return null;
+        }
+        return rug.clone();
     }
 
     /**
@@ -492,6 +632,10 @@ public final class CarpetManager {
         Input input = player.getCurrentInput();
         session.mode().tick(player, input, this.config);
 
+        if (Bukkit.getServer().getCurrentTick() % VIEWER_REFRESH_INTERVAL_TICKS == 0) {
+            refreshVisualViewers(player, session);
+        }
+
         session.fuelTank().drain(1);
         boolean fuelEmpty = session.fuelTank().isEmpty();
         boolean grounded = player.isOnGround();
@@ -501,6 +645,25 @@ public final class CarpetManager {
             case LANDED -> dismiss(player, DismissCause.LANDED);
             case FUEL_EMPTY -> dismiss(player, DismissCause.FUEL_EMPTY);
             case NONE -> applyAltitudeCeiling(player, session);
+        }
+    }
+
+    /**
+     * Re-applies {@link CarpetVisual#refreshViewers}, showing the rider's carpet to every
+     * player currently in their world. {@link #deploy} only calls this once, against the
+     * world's player list at that exact instant — anyone who joins the server or changes worlds
+     * afterward is never in that snapshot and, since both visuals are spawned {@code
+     * setVisibleByDefault(false)}, sees the rider seated on nothing for the rest of the flight
+     * unless something calls this again. {@link #tickSession} does, on the cadence documented
+     * on {@link #VIEWER_REFRESH_INTERVAL_TICKS}. A no-op if the player's world is somehow
+     * {@code null} (a degenerate {@link Location}, already excluded from ever reaching a live
+     * session — see {@link #deploy} — but {@code Player#getWorld()} is checked defensively here
+     * all the same, matching every other {@code World}-typed read in this class).
+     */
+    private void refreshVisualViewers(Player player, CarpetSession session) {
+        World world = player.getWorld();
+        if (world != null) {
+            session.visual().refreshViewers(new ArrayList<>(world.getPlayers()));
         }
     }
 
@@ -521,6 +684,20 @@ public final class CarpetManager {
      * corrected) location on the very next tick, so a clamp lags the visual by at most one tick;
      * clamping the anchor instead would leave the player themself above the ceiling while only
      * the decoration snapped down, which is the actual bug this comparison avoids.
+     *
+     * <p><strong>Ground base is resampled every tick, not the deploy-time snapshot.</strong>
+     * {@code config.yml} documents {@code flight.altitude-ceiling} as "blocks above terrain",
+     * but {@link CarpetSession#groundY()} is captured once, at deploy. Passing that stale value
+     * into every later tick's clamp would hard-lock the ceiling to wherever the rider happened
+     * to take off — flying from a valley into a mountain would clamp them below the mountain's
+     * own surface, phasing them into it instead of letting them climb over it, since a raw
+     * teleport (see {@link #applyAltitudeCeiling}'s own use and {@link SeatedFlightMode#tick})
+     * never collides. {@link #terrainHeightAt} samples the world's highest solid block directly
+     * beneath the flyer's current column instead, so the ceiling — and the floor {@code
+     * FlightGuard.clampAltitude} also enforces via its {@code Math.max(groundY, ...)} — both
+     * track the terrain actually underneath the rider on every tick. {@link
+     * CarpetSession#groundY()} is kept only as the fallback for the (never expected in practice)
+     * case where the flyer's current {@link Location} has no {@link World} to sample.
      */
     @SuppressWarnings("deprecation") // TeleportFlag.EntityState: see SeatedFlightMode's note.
     private void applyAltitudeCeiling(Player player, CarpetSession session) {
@@ -529,12 +706,31 @@ public final class CarpetManager {
             return;
         }
         Location current = flyer.getLocation();
-        int clampedY = this.flightGuard.clampAltitude(current.getBlockY(), session.groundY());
+        World world = current.getWorld();
+        int groundY = world != null
+                ? terrainHeightAt(world, current.getBlockX(), current.getBlockZ())
+                : session.groundY();
+        int clampedY = this.flightGuard.clampAltitude(current.getBlockY(), groundY);
         if (clampedY < current.getBlockY()) {
             Location clamped = current.clone();
             clamped.setY(clampedY);
             flyer.teleport(clamped, TeleportFlag.EntityState.RETAIN_PASSENGERS);
         }
+    }
+
+    /**
+     * The block Y directly above the highest solid block at {@code (x, z)} in {@code world} —
+     * i.e. the terrain surface a player standing at that column would be standing on. One block
+     * lookup, no raycast: cheap enough to run every tick for every active session, unlike a
+     * multi-sample or ray-marched terrain probe would be. Uses {@link
+     * World#getHighestBlockAt(int, int)} (verified present on {@code paper-api
+     * 26.1.2.build.74-stable} via {@code javap}; there is no {@code getHighestBlockYAt} on this
+     * API version, only the {@link org.bukkit.block.Block}-returning form), which is exactly
+     * the same "highest non-air block in this column" query every other terrain-height use in
+     * the Bukkit ecosystem is built on.
+     */
+    private static int terrainHeightAt(World world, int x, int z) {
+        return world.getHighestBlockAt(x, z).getY() + 1;
     }
 
     /**
@@ -580,6 +776,12 @@ public final class CarpetManager {
      * The owning mode's own internal map may keep a stale entry pointing at the now-removed
      * entity; both flight modes already guard every use of their tracked entity with an
      * {@code isDead()}/{@code isValid()} check, so a stale entry is inert rather than a leak.
+     *
+     * <p>No live {@link Player} means no inventory to write the held rug back into (see {@link
+     * #returnRug}'s reasoning for why even a technically-online {@code QUIT} avoids that). It is
+     * instead dropped in the world at the mount/anchor's last known location before that entity
+     * is removed, so this genuinely-offline path still never destroys it outright — it is left
+     * for whoever (or nothing) is standing there rather than vanishing without a trace.
      */
     private void forceRemoveSession(UUID id, CarpetSession session) {
         sessions.remove(id);
@@ -591,6 +793,7 @@ public final class CarpetManager {
         }
         Entity mount = session.mount();
         if (mount != null) {
+            dropRugAtEntityLocation(mount, session.heldRug(), id);
             try {
                 if (!mount.isDead()) {
                     mount.remove();
@@ -599,6 +802,31 @@ public final class CarpetManager {
                 plugin.getLogger().log(Level.WARNING,
                         "Failed to remove carpet mount during shutdown for offline player " + id, e);
             }
+        }
+    }
+
+    /**
+     * Drops {@code rug} in the world at {@code entity}'s current location, for the offline-player
+     * fallback in {@link #forceRemoveSession} where there is no {@link Player} to hand it to
+     * directly. A no-op for an air/empty stack (nothing was taken at deploy time), a dead/invalid
+     * {@code entity} (no location left to drop it at), or a degenerate {@code null} world.
+     */
+    private void dropRugAtEntityLocation(Entity entity, ItemStack rug, UUID playerId) {
+        if (rug.getType() == Material.AIR || rug.getAmount() <= 0) {
+            return;
+        }
+        if (entity.isDead() || !entity.isValid()) {
+            return;
+        }
+        try {
+            Location location = entity.getLocation();
+            World world = location.getWorld();
+            if (world != null) {
+                world.dropItemNaturally(location, rug);
+            }
+        } catch (RuntimeException e) {
+            plugin.getLogger().log(Level.WARNING,
+                    "Failed to drop the carpet rug during shutdown for offline player " + playerId, e);
         }
     }
 

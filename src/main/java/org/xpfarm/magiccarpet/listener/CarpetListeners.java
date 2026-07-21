@@ -183,14 +183,40 @@ public final class CarpetListeners implements Listener {
         combatGrace.clear(player.getUniqueId());
     }
 
-    /** Tears down flight on death. */
+    /**
+     * Tears down flight on death and routes the rug being carried through the death itself,
+     * rather than through {@code CarpetManager}'s normal dismiss-time inventory write.
+     *
+     * <p>{@link CarpetManager#dismiss} deliberately does nothing with the held rug for {@link
+     * CarpetManager.DismissCause#DEATH} (see {@code CarpetManager.returnRug}'s Javadoc) because
+     * only this event exposes {@link PlayerDeathEvent#getKeepInventory()} and its own {@code
+     * getDrops()} list — the two things needed to answer "does this rug survive the death or
+     * land on the ground with everything else." {@link CarpetManager#peekHeldRug} is called
+     * <strong>before</strong> {@link CarpetManager#dismiss}, since {@code dismiss} removes the
+     * session that item is stored on: with {@code keepInventory} true, the player's inventory is
+     * never touched by death at all, so the rug is written straight back to the off-hand; with
+     * it false, the inventory is about to be cleared and its former contents spawned as drops —
+     * adding the rug to {@code event.getDrops()} (computed from the pre-death inventory, which
+     * never held the rug because {@code deploy} already removed it) drops it at the death
+     * location exactly like the rest of the inventory, without ever writing to the inventory that
+     * is seconds away from being wiped.
+     */
     @EventHandler
     public void onPlayerDeath(PlayerDeathEvent event) {
         Player player = event.getEntity();
         if (!carpetManager.hasActiveSession(player)) {
             return;
         }
+        ItemStack heldRug = carpetManager.peekHeldRug(player);
         carpetManager.dismiss(player, CarpetManager.DismissCause.DEATH);
+        if (heldRug == null) {
+            return;
+        }
+        if (event.getKeepInventory()) {
+            player.getInventory().setItemInOffHand(heldRug);
+        } else {
+            event.getDrops().add(heldRug);
+        }
     }
 
     /**
