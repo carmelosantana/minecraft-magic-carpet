@@ -452,5 +452,26 @@ state, not a failure.
 - [ ] Known limitations, skipped checks, configuration or migration notes, rollback guidance, and follow-up owner are recorded.
 - [ ] Evidence distinguishes source commit, published tag/release, updater state, and deployed state without exposing secrets.
 - [ ] Client play-test obligation recorded with a named owner and a target date: `<owner>` / `<date>`.
-- [ ] Client play-test outcome recorded once performed, covering Java join, Bedrock join, and any form, inventory, or rendered item behavior this plugin introduces. Leave unchecked with the owner and date above until the team has run it; an unchecked box here does not block a release, but an unrecorded obligation is a gate 12 failure.
+- [ ] Client play-test outcome recorded once performed, covering Java join, Bedrock join, and any form, inventory, or rendered item behavior this plugin introduces.
+      **PARTIAL — first Java feedback received 2026-07-22, two open bugs. Bedrock untested.**
+      Full write-up: [docs/field-reports/2026-07-22-java-player-v0.1.0.md](field-reports/2026-07-22-java-player-v0.1.0.md)
+      1. **Suffocation death flying into terrain (high).** `SeatedFlightMode.isBlocked`
+         (`SeatedFlightMode.java:172-175`) samples exactly one block at the mount's position,
+         but the rider sits at `mount - 0.6` and is 1.8 tall, so it never tests the rider's
+         head or feet block. Rider ends up embedded in terrain and suffocates;
+         `combat.drop-on-damage` then dismisses them *inside* the wall, turning a graze into a
+         death. Predicted pre-release as limitations A1/A2, but mis-framed as a high-speed
+         tunnelling problem — it reproduces at the default speed because the check tests the
+         wrong volume, not the wrong distance.
+      2. **Cannot dismount (high, soft-lock).** `CarpetManager.java:655` uses
+         `player.isOnGround()` for landing, but the rider is a passenger and that flag is
+         expected to stay false for the whole ride, so `LANDED` likely never fires. Sneak only
+         descends, manual dismount is deliberately cancelled by the `EntityDismountEvent`
+         handler, and `/carpet off` is undocumented in-game — so the only exit is running the
+         fuel dry and taking fall damage. **This is the exact scenario recorded as the #1
+         gate-7a obligation and "top risk"**; the pre-release wording was "may misfire", and in
+         play it appears not to fire at all.
+      Both defects are in the seated path (the Java default); `standing` (the Bedrock default)
+      is probably unaffected — to be confirmed, not assumed. The `-0.6f` carpet offset and
+      whether riders visibly render seated remain **unverified by anyone**. Leave unchecked with the owner and date above until the team has run it; an unchecked box here does not block a release, but an unrecorded obligation is a gate 12 failure.
 - [ ] Public deployment reachability confirmed during that pass: `play.xpfarm.org` reaches the intended Java and Bedrock entry points.

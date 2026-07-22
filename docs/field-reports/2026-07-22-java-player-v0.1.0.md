@@ -1,0 +1,153 @@
+# Field report — Java player, v0.1.0
+
+- Date: 2026-07-22
+- Version: `v0.1.0`
+- Reporter: a Java Edition player on `play.xpfarm.org`
+- Status: **two open bugs, not yet fixed.** Investigated from source; no code changed.
+
+This is the first real client feedback on Magic Carpet. Both reports are genuine defects and
+both map onto specific lines. Notably, **both were already recorded as risks** before release —
+one as a known limitation, one as the explicitly-named top gate-7a risk — and both materialised
+in the first session of real play.
+
+## Report 1 — "Bumped into a wall of dirt and died, said he suffocated in a wall. Wasn't fall damage."
+
+**Severity: high — player death, trivially reproducible.**
+
+### Root cause (near-certain from source)
+
+`SeatedFlightMode.java:172-175` is the only block check in the entire movement path:
+
+```java
+private static boolean isBlocked(Location destination) {
+    World world = destination.getWorld();
+    return world != null && world.getBlockAt(destination).getType().isSolid();
+}
+```
+
+It samples **exactly one block, at the mount's own position**. But the mount is a zero-hitbox
+marker ArmorStand, and the thing that actually collides with terrain is the *rider*:
+
+- The rider sits at `mount − (0, 0.6, 0)` (`CarpetVisual.java:53-59` documents this offset).
+- A player hitbox is 0.6 wide × **1.8 tall**.
+- So the rider occupies roughly `mount.y − 0.6` through `mount.y + 1.2` — **two block layers**,
+  neither of which is guaranteed to be the single block `isBlocked` sampled.
+
+Flying at a dirt wall, the block at the mount's exact position can be air while the rider's
+head block is dirt. `isBlocked` returns false, the teleport proceeds, and the rider's head ends
+up inside solid terrain → suffocation damage.
+
+Confirmed by grep: `getBlockAt` appears exactly once in the whole plugin, at that line. Nothing
+ever checks the block above or below the mount.
+
+### Why it killed rather than merely hurt
+
+Suffocation ticks repeatedly. `combat.drop-on-damage` is `true` by default, so the first
+suffocation tick dismisses the session with `COMBAT` — which drops the rider **inside the wall
+they are already embedded in**, where they keep suffocating with no carpet left to fly out on.
+The combat-drop feature turns a graze into a death.
+
+### Prior record
+
+Recorded pre-release as known limitations A1 and A2 ("collision is destination-only, so high
+speeds tunnel" / "a mount already inside a solid block would freeze"). Both framed the risk as
+*tunnelling at high speed*. The real defect is more basic and present at the default speed: the
+check tests the wrong volume, not the wrong distance. The final review reasoned that a rider
+could always turn away — true for the mount, but it never modelled the rider's own 1.8-tall
+hitbox as the thing that collides.
+
+### Fix direction (not applied)
+
+Check the volume the **rider** occupies, not a single point at the mount:
+
+- At minimum, test the rider's feet block and head block at the destination (`mount.y − 0.6`
+  and `mount.y + 1.2`), not just `mount.y`.
+- Consider `Location#getBlock().getCollisionShape()` or `World#getBlockAt(...).isPassable()`
+  rather than `Material#isSolid()` — `isSolid()` is a material property and misreports several
+  passable blocks (and is also why this is untestable headlessly: it needs a live registry).
+- Keep it cheap. This runs every tick per rider; two block lookups is fine, a raycast is not.
+- Separately, consider whether `combat.drop-on-damage` should ignore suffocation
+  (`DamageCause.SUFFOCATION`) — dropping a rider who is already inside a block strictly worsens
+  their situation. Same argument arguably applies to `DamageCause.VOID` and fall damage.
+
+## Report 2 — "I wasn't able to dismount. How do we dismount?"
+
+**Severity: high — soft-lock. The player has no discoverable way out of flight.**
+
+### Root cause (strong hypothesis — verify on a live server first)
+
+`CarpetManager.java:655`:
+
+```java
+boolean grounded = player.isOnGround();
+```
+
+The rider is a **passenger** of the mount. In vanilla, a passenger's own `onGround` flag is not
+what tracks ground contact — the *vehicle* carries that state, and the passenger's flag is
+expected to stay `false` for the whole ride. If that holds, `grounded` is **never true while
+flying**, so `SessionTickOutcome.decide` never returns `LANDED`, and the carpet never
+auto-stows on ground contact.
+
+This was recorded verbatim as the **#1 gate-7a runtime obligation and "top risk"**:
+
+> Ground detection via `player.isOnGround()` while mounted — top risk. May misfire at block
+> edges; carries vanilla's well-known false-positive/negative behaviour.
+
+The pre-release framing was "may misfire." The player's report suggests it does not fire at all.
+
+### Why every other exit is also closed
+
+The design deliberately has **no dismount input**:
+
+- **Sneak** descends; it does not dismount (`flight.java-mode: seated` design §1).
+- **Shift-off / any manual dismount** is actively cancelled — `CarpetListeners` cancels
+  `EntityDismountEvent` for dismounts the plugin did not initiate, precisely so a rider cannot
+  eject mid-air.
+- **Ground contact** is the intended exit — and per the above, it likely never triggers.
+
+That leaves `/carpet off` as the only working exit, and nothing in-game tells the player it
+exists. The item lore describes hold / jump / sneak, not how to get off.
+
+So the practical player experience is: fly until the fuel runs dry, then get dropped with fall
+damage. That is the `FUEL_EMPTY` path working exactly as designed, reached because the
+`LANDED` path is broken.
+
+### Fix direction (not applied)
+
+Two separate problems; fix both.
+
+1. **Ground detection.** Verify first on a live server whether `player.isOnGround()` is ever
+   true for a passenger. If not, detect landing another way — sample the block beneath the
+   mount for solidity, or compare the mount's Y against the terrain height already computed by
+   `CarpetManager.terrainHeightAt` (`CarpetManager.java:747`). Whatever is chosen must be
+   verified in play, not reasoned about — reasoning is what produced this bug.
+2. **Discoverability.** Even with landing fixed, a rider should have an explicit, obvious way
+   off. Options worth weighing: make sneak-while-already-descending-at-ground-level dismount;
+   allow the vanilla dismount key by *not* cancelling `EntityDismountEvent` when the rider is
+   within a block or two of the ground; add the dismount hint to the item lore and to the
+   deploy message. Whatever is picked, tell the player — the current lore never mentions
+   `/carpet off`.
+
+## Cross-cutting note
+
+Both defects are in the seated flight path, which is the **Java** default. Bedrock players
+default to `standing` mode, which uses native client flight and neither teleports the rider nor
+cancels dismounts — so Bedrock is probably unaffected by both. Worth confirming rather than
+assuming.
+
+## Open question — how did v0.1.0 reach the player?
+
+Gate 11 (deployment) was never run or recorded in the session that built this. The plugin is
+enrolled in the updater manifest and the release is published, so a redeployment would install
+it — but there is no recorded evidence of that deployment. Establish what is actually running on
+`play.xpfarm.org` before shipping a fix, so the fix is known to land on top of the right build.
+
+## What to do next
+
+1. Reproduce both on a disposable stack with a real Java client attached — gate 7a attaches no
+   client, which is exactly why both of these survived it.
+2. Confirm the `isOnGround()` behaviour for a passenger before changing anything.
+3. Fix, add regression coverage where the logic is separable, and ship as `v0.1.1`.
+4. Re-check the remaining unverified client-facing obligations in the same play-test pass —
+   above all the `-0.6f` carpet offset and whether riders actually render seated, which is still
+   unconfirmed by anyone.

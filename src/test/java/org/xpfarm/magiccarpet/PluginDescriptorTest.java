@@ -10,6 +10,8 @@
 package org.xpfarm.magiccarpet;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -44,8 +46,18 @@ import org.yaml.snakeyaml.Yaml;
  */
 final class PluginDescriptorTest {
 
-    private static final Path PLUGIN_YML = Path.of("src/main/resources/plugin.yml");
-    private static final Path CONFIG_YML = Path.of("src/main/resources/config.yml");
+    private static final Path PLUGIN_YML = descriptor("plugin.yml");
+    private static final Path CONFIG_YML = descriptor("config.yml");
+
+    /**
+     * Prefers the Maven-filtered copy in {@code target/classes} — that is the file that actually
+     * ships, and property substitution can inject YAML metacharacters the source file never had.
+     * Falls back to the source tree so the test still runs before {@code process-resources}.
+     */
+    private static Path descriptor(String name) {
+        Path filtered = Path.of("target", "classes", name);
+        return Files.exists(filtered) ? filtered : Path.of("src", "main", "resources", name);
+    }
 
     private static Map<String, Object> parse(Path path) throws IOException {
         try (InputStream in = Files.newInputStream(path)) {
@@ -71,10 +83,15 @@ final class PluginDescriptorTest {
 
         assertEquals("MagicCarpet", parsed.get("name"));
         assertEquals("org.xpfarm.magiccarpet.MagicCarpetPlugin", parsed.get("main"));
-        assertEquals("26.1", parsed.get("api-version"),
-                "api-version must be a quoted string; an unquoted 26.1 parses as a double");
-        assertNotNull(parsed.get("version"), "version is required");
+        assertInstanceOf(String.class, parsed.get("api-version"),
+                "api-version must be quoted; unquoted it parses as a double and 1.20 becomes 1.2");
+        assertEquals("26.1", parsed.get("api-version"));
         assertNotNull(parsed.get("description"), "description is required");
+
+        Object version = parsed.get("version");
+        assertNotNull(version, "version is required");
+        assertFalse(version.toString().contains("${"),
+                "version still holds an unresolved Maven property: " + version);
     }
 
     @Test
