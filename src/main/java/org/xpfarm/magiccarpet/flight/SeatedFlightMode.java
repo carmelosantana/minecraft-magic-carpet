@@ -49,6 +49,21 @@ public final class SeatedFlightMode implements FlightMode {
      */
     private static final String MOUNT_TAG = "magiccarpet";
 
+    /**
+     * How far above the deploy location the mount is spawned, in blocks.
+     *
+     * <p>The rider jumps to unfurl the carpet, so the deploy {@link Location} is at their feet,
+     * on the ground. Spawning the mount exactly there leaves the rider still touching the floor,
+     * and since {@link CarpetMotion} cruises in the look direction with no automatic climb, a
+     * rider looking level would simply skim the ground for the whole flight — which, now that
+     * landing actually ends the session (see {@code CarpetManager.tickSession}), would stow the
+     * carpet again on the very next tick. Lifting the mount clear of the ground makes takeoff
+     * unambiguous and matches the fiction of a carpet picking you up.
+     *
+     * <p>Applied only when the rider actually fits there — see {@link #liftedSpawn}.
+     */
+    private static final double DEPLOY_LIFT = 1.2;
+
     private final Map<UUID, ArmorStand> mounts = new ConcurrentHashMap<>();
 
     /**
@@ -80,7 +95,7 @@ public final class SeatedFlightMode implements FlightMode {
             throw new IllegalStateException(
                     "Player " + id + " already has an active seated-flight mount; dismiss before redeploying.");
         }
-        ArmorStand stand = world.spawn(at, ArmorStand.class, s -> {
+        ArmorStand stand = world.spawn(liftedSpawn(player, at), ArmorStand.class, s -> {
             s.setInvisible(true);
             s.setMarker(true);
             s.setSmall(true);
@@ -98,6 +113,21 @@ public final class SeatedFlightMode implements FlightMode {
         }
         mounts.put(id, stand);
         return stand;
+    }
+
+    /**
+     * {@code at} raised by {@link #DEPLOY_LIFT}, or {@code at} unchanged when the rider would not
+     * fit at that height — deploying under a low ceiling must not shove them into it. Falling back
+     * to the unlifted location is safe: {@code CarpetManager} only arms landing detection once the
+     * rider has been clear of the ground at least once, so a rider who could not be lifted keeps
+     * flying (and can climb out by looking up or holding jump) rather than instantly re-stowing.
+     */
+    private static Location liftedSpawn(Player player, Location at) {
+        Vector lift = new Vector(0, DEPLOY_LIFT, 0);
+        if (RiderClearance.collidesAfterMoving(player, lift)) {
+            return at;
+        }
+        return at.clone().add(lift);
     }
 
     /**
@@ -129,21 +159,16 @@ public final class SeatedFlightMode implements FlightMode {
      * jar (verified by inspecting every {@code *Teleport*} class it ships). Suppressed
      * deliberately rather than switched to {@code setVelocity}, which is prohibited.
      *
-     * <p><strong>Solid-block check before moving.</strong> A raw teleport does not collide —
-     * unlike vanilla movement, nothing stops it from placing the mount (and the seated player
-     * riding it) inside solid terrain, e.g. flying straight at a hillside. Before teleporting,
-     * this checks whether the destination block is solid and, if so, skips the teleport for this
-     * tick entirely: the carpet simply stops advancing rather than phasing into the block, and
-     * tries again next tick (so turning away or climbing over the obstruction resumes movement
-     * immediately, with no separate "stuck" state to track or clear). Deliberately a single block
-     * lookup at the destination only — not a multi-point check along the path and not a raycast —
-     * matching the same cheap-per-tick-per-rider budget the altitude ceiling's own terrain sample
-     * uses ({@code CarpetManager.terrainHeightAt}); a full sliding-along-the-surface response
-     * would need more lookups per tick for a marginal smoothness gain over a hard stop. This is
-     * untestable outside a running server the same way the rest of this class is: {@code
-     * Material#isSolid()} itself throws {@code IllegalStateException} ("No RegistryAccess
-     * implementation found") without a live Paper registry, confirmed by attempting exactly that
-     * call in a throwaway unit test.
+     * <p><strong>Collision check before moving.</strong> A raw teleport does not collide — unlike
+     * vanilla movement, nothing stops it from placing the mount (and the seated player riding it)
+     * inside solid terrain, e.g. flying straight at a hillside. Before teleporting, this asks
+     * whether the <em>rider's</em> hitbox would intersect terrain at the destination and, if so,
+     * skips the teleport for this tick entirely: the carpet stops advancing rather than phasing
+     * into the block, and tries again next tick (so turning away or climbing over the obstruction
+     * resumes movement immediately, with no separate "stuck" state to track or clear). See {@link
+     * #wouldTrapRider} for why the rider's box rather than the mount's position, and {@link
+     * RiderClearance} for the world query itself — one {@code hasCollisionsIn} call per tick per
+     * rider, the same cheap budget the altitude ceiling's terrain sample uses.
      */
     @SuppressWarnings("deprecation")
     @Override
@@ -157,21 +182,30 @@ public final class SeatedFlightMode implements FlightMode {
                 CarpetMotion.nextOffset(direction, input.isSneak(), input.isJump(), config.flightSpeed());
         Location next = stand.getLocation().add(offset);
         next.setDirection(direction);
-        if (isBlocked(next)) {
+        if (wouldTrapRider(player, offset)) {
             return;
         }
         stand.teleport(next, TeleportFlag.EntityState.RETAIN_PASSENGERS);
     }
 
     /**
-     * Whether {@code destination}'s block would obstruct the mount — true when its world's
-     * block there is solid. A {@code null} world (a degenerate {@link Location}, not expected in
-     * practice since {@code destination} is always derived from a live mount's own location) is
-     * treated as unobstructed rather than guessed at.
+     * Whether moving by {@code offset} would push {@code player} into terrain.
+     *
+     * <p>Tests the rider's own hitbox, not the mount's position. The mount is a zero-hitbox
+     * marker ArmorStand that never collides with anything; the rider hanging off it is 1.8 blocks
+     * tall and is what actually ends up inside a wall. The original single-block sample at the
+     * mount's own position is what let a rider fly head-first into a dirt wall and suffocate
+     * (field report, v0.1.0) — the check was testing the wrong <em>volume</em>, which is why it
+     * reproduced at the default flight speed rather than only at the high speeds the pre-release
+     * limitation note anticipated.
+     *
+     * <p>A rider who is <em>already</em> embedded is deliberately allowed to keep moving: refusing
+     * to move them would trap them inside the terrain permanently, which is worse than the
+     * collision this method exists to prevent. See {@link RiderClearance#isEmbedded}.
      */
-    private static boolean isBlocked(Location destination) {
-        World world = destination.getWorld();
-        return world != null && world.getBlockAt(destination).getType().isSolid();
+    private static boolean wouldTrapRider(Player player, Vector offset) {
+        return RiderClearance.collidesAfterMoving(player, offset)
+                && !RiderClearance.isEmbedded(player);
     }
 
     /**

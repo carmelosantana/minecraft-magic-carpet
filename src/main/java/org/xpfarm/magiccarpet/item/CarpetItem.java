@@ -72,7 +72,8 @@ public final class CarpetItem {
         meta.lore(List.of(
                 plainLoreLine("Hold in your off-hand."),
                 plainLoreLine("Jump to fly."),
-                plainLoreLine("Sneak to descend.")));
+                plainLoreLine("Sneak to descend."),
+                plainLoreLine("Land to stow it, or /carpet off.")));
         meta.setEnchantmentGlintOverride(true);
         meta.getPersistentDataContainer().set(MARKER_KEY, PersistentDataType.BYTE, MARKER_VALUE);
 

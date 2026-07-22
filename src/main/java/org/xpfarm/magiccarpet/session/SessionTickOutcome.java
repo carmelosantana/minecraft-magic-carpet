@@ -38,8 +38,16 @@ final class SessionTickOutcome {
     private SessionTickOutcome() {
     }
 
-    static EndReason decide(boolean grounded, boolean fuelEmpty) {
-        if (grounded) {
+    /**
+     * @param grounded whether solid ground sits directly beneath the rider's feet this tick
+     * @param fuelEmpty whether the fuel gauge has run out this tick
+     * @param hasBeenAirborne whether the rider has been clear of the ground at least once since
+     *     deploying — see {@code CarpetSession.hasBeenAirborne}. Landing requires this: deploy
+     *     happens from a jump, so the rider is standing on the ground for the first tick or two
+     *     and would otherwise land instantly, ending the flight before it started.
+     */
+    static EndReason decide(boolean grounded, boolean fuelEmpty, boolean hasBeenAirborne) {
+        if (grounded && hasBeenAirborne) {
             return EndReason.LANDED;
         }
         if (fuelEmpty) {

@@ -19,23 +19,38 @@ class SessionTickOutcomeTest {
 
     @Test
     void neitherSignalContinuesTheSession() {
-        assertEquals(EndReason.NONE, SessionTickOutcome.decide(false, false));
+        assertEquals(EndReason.NONE, SessionTickOutcome.decide(false, false, true));
     }
 
     @Test
     void groundedAloneEndsWithLanded() {
-        assertEquals(EndReason.LANDED, SessionTickOutcome.decide(true, false));
+        assertEquals(EndReason.LANDED, SessionTickOutcome.decide(true, false, true));
     }
 
     @Test
     void fuelEmptyAloneEndsWithFuelEmpty() {
-        assertEquals(EndReason.FUEL_EMPTY, SessionTickOutcome.decide(false, true));
+        assertEquals(EndReason.FUEL_EMPTY, SessionTickOutcome.decide(false, true, true));
     }
 
     @Test
     void bothSignalsTogetherPreferLandedOverFuelEmpty() {
         // The documented tie-break: touching ground on the exact tick fuel also empties out
         // must report LANDED, not FUEL_EMPTY, because there is no fall to take damage from.
-        assertEquals(EndReason.LANDED, SessionTickOutcome.decide(true, true));
+        assertEquals(EndReason.LANDED, SessionTickOutcome.decide(true, true, true));
+    }
+
+    @Test
+    void groundedBeforeEverLeavingTheGroundDoesNotLand() {
+        // Deploy happens from a jump, so the rider is still standing on the ground for the first
+        // tick or two. Landing there would end the flight before it began.
+        assertEquals(EndReason.NONE, SessionTickOutcome.decide(true, false, false));
+    }
+
+    @Test
+    void fuelEmptyStillEndsTheSessionBeforeTakeoff() {
+        // The takeoff latch gates LANDED only. A rider whose tank empties must always be
+        // dismissed, armed or not, or an unlifted session would fly forever on no fuel.
+        assertEquals(EndReason.FUEL_EMPTY, SessionTickOutcome.decide(true, true, false));
+        assertEquals(EndReason.FUEL_EMPTY, SessionTickOutcome.decide(false, true, false));
     }
 }

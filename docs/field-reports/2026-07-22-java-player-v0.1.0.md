@@ -3,7 +3,7 @@
 - Date: 2026-07-22
 - Version: `v0.1.0`
 - Reporter: a Java Edition player on `play.xpfarm.org`
-- Status: **two open bugs, not yet fixed.** Investigated from source; no code changed.
+- Status: **both fixed in source, neither confirmed in play.** See "Fix applied" at the end.
 
 This is the first real client feedback on Magic Carpet. Both reports are genuine defects and
 both map onto specific lines. Notably, **both were already recorded as risks** before release —
@@ -141,6 +141,70 @@ Gate 11 (deployment) was never run or recorded in the session that built this. T
 enrolled in the updater manifest and the release is published, so a redeployment would install
 it — but there is no recorded evidence of that deployment. Establish what is actually running on
 `play.xpfarm.org` before shipping a fix, so the fix is known to land on top of the right build.
+
+## Fix applied — 2026-07-22
+
+A follow-up report from the same player closed the open question above: **"when we landed, we
+stayed seated."** That is direct confirmation that `LANDED` never fires — the rider reached the
+ground and the session did not end. Report 2's root cause is now observed, not hypothesised.
+
+### What changed
+
+Both bugs turned out to be the same mistake — approximating the rider's body with a single point —
+and both are fixed by the same new class, `RiderClearance`, which asks the world about the rider's
+**actual hitbox**.
+
+The pinned `paper-api 26.1.2.build.74-stable` turned out to expose exactly the right primitives,
+which the pre-release research never found: `RegionAccessor#hasCollisionsIn(BoundingBox)` and
+`Entity#getBoundingBox()` (both confirmed with `javap` against the pinned jar). That is a better
+outcome than the fix directions above assumed — no hand-rolled multi-block sampling, and, notably,
+**no dependency on the uncalibrated `-0.6` offset** in `CarpetVisual`. The world is asked where the
+rider actually is rather than told.
+
+| File | Change |
+| --- | --- |
+| `flight/RiderClearance.java` | New. `isGrounded`, `collidesAfterMoving`, `isEmbedded`, plus the pure `groundProbe` geometry. |
+| `flight/SeatedFlightMode.java` | Collision now tests the rider's box, not the mount's block. Already-embedded riders may still move (fixes limitation A2). Deploy lifts the mount 1.2 blocks when the rider fits there. |
+| `session/CarpetSession.java` | New `hasBeenAirborne` latch. |
+| `session/SessionTickOutcome.java` | `decide` takes the latch; `LANDED` requires it. |
+| `session/CarpetManager.java` | Landing and fuel recharge both use `RiderClearance.isGrounded` instead of `player.isOnGround()`. |
+| `listener/CarpetListeners.java` | `combat.drop-on-damage` no longer fires on `SUFFOCATION`. |
+| `item/CarpetItem.java` | Lore line: "Land to stow it, or /carpet off." |
+
+Two design notes worth carrying forward:
+
+- **The takeoff latch.** Deploy happens from a jump, so the rider starts on the ground; without a
+  latch, working landing detection would stow the carpet on the tick it deployed. Landing arms only
+  after the rider has been clear of the ground once. Latching on the observed state rather than
+  counting grace ticks avoids depending on how fast a passenger's position propagates after the
+  mount spawns — timing this plugin does not control, and the kind of assumption that produced
+  bug 2 in the first place.
+- **The deploy lift** is skipped when the rider would not fit (low ceiling). They keep flying, since
+  the latch is unarmed, and can climb out by looking up or holding jump.
+
+### Verification status — read this before shipping
+
+- `mvn verify` green: **120 tests**, up from 107. New coverage: `RiderClearanceTest` (probe
+  geometry) and two latch cases in `SessionTickOutcomeTest`.
+- Gate 7a re-run green: plugin loads and enables on Paper 26.1.2, `/carpet reload` works, no new
+  exceptions. Only the expected WorldGuard-absent warning.
+- **Neither fix is confirmed to work.** Gate 7a attaches no client, so nothing here has flown a
+  carpet, hit a wall, or landed. Every test added is of geometry and decision logic; the
+  `hasCollisionsIn` calls that make the fix real cannot be exercised without a server and a player.
+
+That is the same blind spot that let both bugs ship. It has not been closed — it has been narrowed.
+The fixes rest on a correct reading of the API rather than on observed behaviour, which is exactly
+the epistemic position that produced bug 2. **These need a play-test before they can be called
+fixed.**
+
+Specifically, on a live server with a Java client:
+
+1. Fly deliberately into a dirt wall at default speed. Expect: the carpet stops, no suffocation.
+2. Sneak down to the ground. Expect: the carpet stows itself and the rug returns to the off-hand.
+3. Deploy under a low ceiling. Expect: it still deploys and still flies.
+4. Confirm the deploy lift feels right — 1.2 blocks is a chosen number, not a measured one.
+5. While there, settle the two obligations that have never been checked by anyone: whether riders
+   actually render seated, and whether the `-0.6` carpet offset puts the rug under them.
 
 ## What to do next
 

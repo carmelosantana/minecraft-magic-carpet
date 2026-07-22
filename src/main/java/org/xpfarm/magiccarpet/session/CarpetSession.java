@@ -40,6 +40,21 @@ public final class CarpetSession {
     private final ItemStack heldRug;
 
     /**
+     * Whether this rider has been clear of the ground at least once since deploying — the latch
+     * that arms landing detection.
+     *
+     * <p>Deploy happens from a jump, so the rider starts at ground level and a ground probe reads
+     * true on the first tick or two before the carpet has lifted them. Without this latch the
+     * session would end the instant it began. Latching on "has been airborne" rather than counting
+     * grace ticks makes that independent of how quickly the rider's position propagates after the
+     * mount is spawned, which is timing this plugin does not control.
+     *
+     * <p>The one piece of mutable state in an otherwise immutable holder; only {@code
+     * CarpetManager}'s tick loop writes it, on the main server thread.
+     */
+    private boolean hasBeenAirborne;
+
+    /**
      * @param playerId the rider's UUID
      * @param mode the {@link FlightMode} strategy driving this session
      * @param mount the mount or visual-anchor entity {@code mode.deploy} returned; non-null for
@@ -102,6 +117,16 @@ public final class CarpetSession {
 
     public int groundY() {
         return groundY;
+    }
+
+    /** See {@link #hasBeenAirborne} — whether landing detection is armed for this session. */
+    public boolean hasBeenAirborne() {
+        return hasBeenAirborne;
+    }
+
+    /** Arms landing detection. Idempotent; never un-set for the life of the session. */
+    public void markAirborne() {
+        this.hasBeenAirborne = true;
     }
 
     /**

@@ -37,6 +37,7 @@ import org.xpfarm.magiccarpet.flight.DenyReason;
 import org.xpfarm.magiccarpet.flight.FlightGuard;
 import org.xpfarm.magiccarpet.flight.FlightMode;
 import org.xpfarm.magiccarpet.flight.FuelTank;
+import org.xpfarm.magiccarpet.flight.RiderClearance;
 import org.xpfarm.magiccarpet.item.CarpetItem;
 import org.xpfarm.magiccarpet.visual.CarpetVisual;
 import org.xpfarm.magiccarpet.visual.EditionResolver;
@@ -615,7 +616,7 @@ public final class CarpetManager {
                 continue;
             }
             try {
-                if (player.isOnGround()) {
+                if (RiderClearance.isGrounded(player)) {
                     entry.getValue().recharge(1);
                 }
             } catch (RuntimeException e) {
@@ -631,16 +632,21 @@ public final class CarpetManager {
      * exhaustion — see {@link SessionTickOutcome} for the tie-break between the two) or, if
      * flight continues, enforce the altitude ceiling.
      *
-     * <p><strong>Ground detection.</strong> Uses {@code player.isOnGround()} — the player's
-     * own flag, not the mount's — for both flight modes. This is a deliberate, documented
-     * choice, not an oversight; the full reasoning and its known weaknesses are recorded in
-     * this task's report, since they cannot be fully settled without runtime verification
-     * against a live server. In short: {@code isOnGround()} carries vanilla's well-known
-     * "block edge" false-positive/negative behaviour in general, and for {@code
-     * SeatedFlightMode} specifically the mount is a zero-hitbox marker {@code ArmorStand}
-     * moved exclusively by teleport rather than physics, so its own {@code isOnGround()} would
-     * very likely never be reliable — which is exactly why the player's own flag is used
-     * instead of the mount's, even in seated mode.
+     * <p><strong>Ground detection.</strong> Uses {@link RiderClearance#isGrounded}, which probes
+     * a thin slab beneath the rider's own hitbox, for both flight modes.
+     *
+     * <p>This replaced {@code player.isOnGround()}, which did not work. A seated rider is a
+     * <em>passenger</em>, and a passenger's own ground flag does not track ground contact — the
+     * vehicle carries that state — so it stayed false for the whole ride, {@code LANDED} never
+     * fired, and the carpet never auto-stowed. Confirmed in play by the first Java player to fly
+     * one: they touched down and stayed seated, with no way off short of running the fuel dry.
+     * That risk was recorded pre-release as this gate's "top risk" with the wording "may misfire";
+     * it did not misfire, it never fired. A geometric probe is correct for a passenger, for a
+     * natively-flying player, and for a player on foot alike, because it asks about the world
+     * rather than about a movement flag whose meaning depends on what the player is riding.
+     *
+     * <p>Landing is armed by {@link CarpetSession#hasBeenAirborne()} — see that field for why a
+     * rider who has never left the ground cannot land.
      */
     private void tickSession(Player player, CarpetSession session) {
         Input input = player.getCurrentInput();
@@ -652,9 +658,13 @@ public final class CarpetManager {
 
         session.fuelTank().drain(1);
         boolean fuelEmpty = session.fuelTank().isEmpty();
-        boolean grounded = player.isOnGround();
+        boolean grounded = RiderClearance.isGrounded(player);
+        if (!grounded) {
+            session.markAirborne();
+        }
 
-        SessionTickOutcome.EndReason reason = SessionTickOutcome.decide(grounded, fuelEmpty);
+        SessionTickOutcome.EndReason reason =
+                SessionTickOutcome.decide(grounded, fuelEmpty, session.hasBeenAirborne());
         switch (reason) {
             case LANDED -> dismiss(player, DismissCause.LANDED);
             case FUEL_EMPTY -> dismiss(player, DismissCause.FUEL_EMPTY);

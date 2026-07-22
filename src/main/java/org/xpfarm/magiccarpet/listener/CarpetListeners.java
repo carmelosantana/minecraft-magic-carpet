@@ -157,6 +157,15 @@ public final class CarpetListeners implements Listener {
      * lookup, both cheap, before reading config or touching the grace tracker — this event fires
      * for every point of damage to every entity on the server, most of which are not a carpet
      * rider at all.
+     *
+     * <p><strong>Suffocation is exempt.</strong> Dropping a rider who is inside a block leaves
+     * them inside that block with no carpet to fly out on, so they keep suffocating — turning a
+     * survivable graze into a death. That is exactly how the first reported carpet fatality
+     * happened (field report, v0.1.0): a collision bug embedded the rider in a dirt wall and this
+     * handler then dismissed them into it. The collision bug itself is fixed in {@code
+     * SeatedFlightMode}; this exemption is the second layer, so that any future way of ending up
+     * inside terrain is merely unpleasant rather than lethal. The setting is named {@code
+     * combat.drop-on-damage} and suffocation is not combat.
      */
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onEntityDamage(EntityDamageEvent event) {
@@ -164,6 +173,9 @@ public final class CarpetListeners implements Listener {
             return;
         }
         if (!carpetManager.hasActiveSession(player)) {
+            return;
+        }
+        if (event.getCause() == EntityDamageEvent.DamageCause.SUFFOCATION) {
             return;
         }
         MagicCarpetConfig activeConfig = this.config;
