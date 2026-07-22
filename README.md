@@ -1,8 +1,7 @@
 # Magic Carpet
 
 An enchanted rug for [Paper](https://papermc.io/) servers. Carry it in either hand,
-jump, and it unfurls beneath you — then fly where you look until you sneak back down
-to the ground.
+jump, and it unfurls beneath you — then fly until you settle back down to the ground.
 
 Play it on **`play.xpfarm.org`** (Java Edition and Bedrock Edition via Geyser).
 
@@ -13,8 +12,13 @@ Play it on **`play.xpfarm.org`** (Java Edition and Bedrock Edition via Geyser).
    Bedrock clients cannot place arbitrary items in the off-hand at all, so main-hand carry is
    the only way carpet flight is reachable for them.
 3. **Jump.** The carpet unfurls and flight begins.
-4. Steer by looking — the carpet cruises forward, and looking up or down climbs or dives.
+4. **Fly normally** — the carpet grants flight, so you steer with your usual movement keys.
 5. **Sneak** to lose altitude. Touching the ground stows the carpet back into your hand.
+
+Servers wanting the older feel can set `flight.java-mode: seated` in `config.yml`, which renders
+the rider in the sitting pose and cruises them in the direction they look. It is not the default:
+being seated makes the rider a passenger of an invisible mount, and that single fact caused every
+serious bug found in v0.1.0 — see `docs/field-reports/`.
 
 A charge drains while you are airborne and refills while you stand on the ground.
 Run it dry in mid-air and the carpet vanishes — you will fall, and the landing counts.

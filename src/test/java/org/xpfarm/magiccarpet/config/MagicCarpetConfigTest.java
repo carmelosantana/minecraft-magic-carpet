@@ -24,7 +24,7 @@ final class MagicCarpetConfigTest {
         List<String> warnings = new ArrayList<>();
         MagicCarpetConfig config = MagicCarpetConfig.load(new InMemoryConfigSource(), warnings::add);
 
-        assertEquals(FlightModeKind.SEATED, config.flightJavaMode());
+        assertEquals(FlightModeKind.STANDING, config.flightJavaMode());
         assertEquals(FlightModeKind.STANDING, config.flightBedrockMode());
         assertEquals(0.5, config.flightSpeed());
         assertEquals(64, config.flightAltitudeCeiling());
@@ -43,7 +43,9 @@ final class MagicCarpetConfigTest {
     @Test
     void validOverrideIsAppliedForEveryKeyWithNoWarnings() {
         InMemoryConfigSource source = new InMemoryConfigSource();
-        source.set("flight.java-mode", "standing");
+        // Both modes are set to the OPPOSITE of their defaults on purpose: an override test
+        // that happens to assert the default value proves nothing about the key being read.
+        source.set("flight.java-mode", "seated");
         source.set("flight.bedrock-mode", "seated");
         source.set("flight.speed", 1.25);
         source.set("flight.altitude-ceiling", 100);
@@ -60,7 +62,7 @@ final class MagicCarpetConfigTest {
         List<String> warnings = new ArrayList<>();
         MagicCarpetConfig config = MagicCarpetConfig.load(source, warnings::add);
 
-        assertEquals(FlightModeKind.STANDING, config.flightJavaMode());
+        assertEquals(FlightModeKind.SEATED, config.flightJavaMode());
         assertEquals(FlightModeKind.SEATED, config.flightBedrockMode());
         assertEquals(1.25, config.flightSpeed());
         assertEquals(100, config.flightAltitudeCeiling());
@@ -159,7 +161,7 @@ final class MagicCarpetConfigTest {
         List<String> warnings = new ArrayList<>();
         MagicCarpetConfig config = MagicCarpetConfig.load(source, warnings::add);
 
-        assertEquals(FlightModeKind.SEATED, config.flightJavaMode());
+        assertEquals(FlightModeKind.STANDING, config.flightJavaMode());
         assertEquals(1, warnings.size());
         assertTrue(warnings.get(0).contains("flight.java-mode"));
         assertTrue(warnings.get(0).contains("diagonal"));
@@ -182,14 +184,14 @@ final class MagicCarpetConfigTest {
     @Test
     void enumParsingIsCaseInsensitive() {
         InMemoryConfigSource source = new InMemoryConfigSource();
-        source.set("flight.java-mode", "STANDING");
+        source.set("flight.java-mode", "SEATED");
         source.set("flight.bedrock-mode", "Seated");
         source.set("worlds.mode", "ALLOW-LIST");
 
         List<String> warnings = new ArrayList<>();
         MagicCarpetConfig config = MagicCarpetConfig.load(source, warnings::add);
 
-        assertEquals(FlightModeKind.STANDING, config.flightJavaMode());
+        assertEquals(FlightModeKind.SEATED, config.flightJavaMode());
         assertEquals(FlightModeKind.SEATED, config.flightBedrockMode());
         assertEquals(WorldListMode.ALLOW_LIST, config.worldsMode());
         assertTrue(warnings.isEmpty());
@@ -211,7 +213,7 @@ final class MagicCarpetConfigTest {
         assertTrue(warnings.stream().anyMatch(message -> message.contains("combat.grace-ticks")));
         // Valid keys elsewhere in the same load are unaffected by the invalid ones.
         assertEquals(0.5, config.flightSpeed());
-        assertEquals(FlightModeKind.SEATED, config.flightJavaMode());
+        assertEquals(FlightModeKind.STANDING, config.flightJavaMode());
         assertEquals(40, config.combatGraceTicks());
     }
 

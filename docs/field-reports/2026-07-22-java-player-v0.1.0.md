@@ -215,3 +215,76 @@ Specifically, on a live server with a Java client:
 4. Re-check the remaining unverified client-facing obligations in the same play-test pass —
    above all the `-0.6f` carpet offset and whether riders actually render seated, which is still
    unconfirmed by anyone.
+
+## Second round — Bedrock reports, same day
+
+Five more reports arrived after the fixes above. They resolved into three causes, one of them
+architectural.
+
+### Bedrock could not fly at all, and Java could not fly from the main hand
+
+The deploy listener read only the off-hand. **Bedrock clients cannot put a carpet in the off-hand
+at all** — the client permits only a fixed set of items there (shields, totems, maps, arrows,
+fireworks), and GeyserMC/Geyser#2057 is closed "Can't Fix" because it is a client restriction, not
+a Geyser bug. Off-hand-only made carpet flight structurally unreachable on Bedrock. Nobody caught
+it because no Bedrock client ever attached to a test stack.
+
+Deploy now accepts either hand, preferring the off-hand so Java behaviour is unchanged, and the
+session records which hand it took the rug from so stow, death and quit all return it there.
+
+**The deeper cause was the trigger, not the hand.** Deploy hung off `PlayerJumpEvent`, which Paper
+derives from player *movement* (it carries a from/to `Location` pair). Nothing establishes that
+Geyser's movement translation produces the pattern that detection expects. Deploy now uses
+`PlayerInputEvent`, and that path was verified end to end from source rather than assumed:
+
+- Geyser's `InputCache.processInputs` sets `.withJump(...)` from the Bedrock `JUMP_CURRENT_RAW` /
+  `JUMP_DOWN` / `AUTO_JUMPING_IN_WATER` flags and sends `ServerboundPlayerInputPacket`.
+- Paper's `ServerGamePacketListenerImpl.handlePlayerInput` fires `PlayerInputEvent` from that
+  packet whenever the input changes, with no player-type gating.
+
+The Paper side was checked specifically because if Paper did not fire that event, the change would
+have broken deploy for *everyone* rather than fixing it for Bedrock.
+
+### Bedrock saw the rug around a Java rider's neck
+
+Both visuals rode the mount as passengers, so both sat at the vehicle attachment point — roughly
+chest height. Only the `BlockDisplay` had a correction (`TRANSLATE_Y = -0.6`, described in its own
+Javadoc as an uncalibrated estimate); a `FallingBlock` has no transformation to correct with, so
+the Bedrock stand-in got none at all.
+
+Both visuals are now driven to the rider's feet every tick instead of being carried. That removes
+the attachment offset from the problem rather than trying to cancel it, makes both editions render
+from the same coordinate so they cannot disagree, and deletes the guessed constant outright.
+`setTeleportDuration(1)` keeps the display smooth. The Java carpet also shrank from 3x3 to 1x1 to
+match the unscalable Bedrock stand-in — which incidentally fixed a centring bug: `-0.5` centres a
+1x1 display exactly but left the 3x one centred a full block off the rider.
+
+### Standing is now the default for both editions
+
+`flight.java-mode` now defaults to `standing`. Every serious bug in v0.1.0 traces to one decision —
+the rider being a **passenger** so they render seated:
+
+| Bug | Cause |
+| --- | --- |
+| Suffocated in a dirt wall | Server drives the mount by teleport; raw teleports do not collide |
+| Landing never stowed | A passenger's own ground flag never becomes true |
+| No dismount | `EntityDismountEvent` must be cancelled or sneak ejects the rider mid-air |
+| Rug at neck height | Fighting an uncalibrated passenger attachment offset |
+
+Standing has none of it: the player flies themselves with real collision, is not a passenger, and
+has no vehicle to eject from. The cost is real and worth stating — **"flies where you look" is
+gone**; standing mode is native flight with ordinary movement keys.
+
+This was a one-line default change rather than a rewrite because both paths plus config were built
+at design time. `seated` remains fully supported and selectable.
+
+`flight.speed` still applies to seated mode only. No standing-speed setting was added: `setFlySpeed`
+takes an abstract 0.0-1.0 scale, not blocks per tick, and a guessed conversion would be worse than
+documenting the gap. Revisit once someone has felt the vanilla speed.
+
+### Verification status
+
+`mvn verify` green at 127 tests (from 107 at v0.1.0); gate 7a green on every change. **None of it
+is confirmed in play** — no client has attached, so nothing here has pressed jump, hit a wall,
+landed, or looked at a carpet. The visual rewrite is the least verified part of all: it is the only
+change whose entire purpose is what a player sees, and it has been seen by nobody.

@@ -679,6 +679,11 @@ public final class CarpetManager {
         Input input = player.getCurrentInput();
         session.mode().tick(player, input, this.config);
 
+        // Both visuals are driven, not carried — see CarpetVisual.followRider for why riding the
+        // mount put the rug around a Bedrock viewer's neck. Runs after the mode's own movement
+        // step so the carpet lands on the rider's post-move position, not their previous one.
+        session.visual().followRider(player.getLocation());
+
         if (Bukkit.getServer().getCurrentTick() % VIEWER_REFRESH_INTERVAL_TICKS == 0) {
             refreshVisualViewers(player, session);
         }

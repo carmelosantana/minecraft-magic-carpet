@@ -1,5 +1,5 @@
 /*
- * MagicCarpet - the dual per-edition carpet visual, attached as passengers of the mount.
+ * MagicCarpet - the dual per-edition carpet visual, driven to the rider's feet each tick.
  * Copyright (C) 2026 Carmelo Santana
  *
  * This program is free software: you can redistribute it and/or modify it under the
@@ -35,9 +35,11 @@ import org.joml.Vector3f;
  * so exactly one is ever visible to any given player.
  *
  * <p>This class does not spawn the mount; the caller (the flight mode that owns the mount
- * entity, task 6) supplies it already spawned, and both visuals are attached to it as
- * passengers. Neither visual is ever given a velocity: falling-block velocity does not move on
- * Bedrock (Geyser#5655, closed "Can't Fix"), and movement comes entirely from riding the mount.
+ * entity) supplies it already spawned, and both visuals are spawned at its location. Neither
+ * visual rides anything — {@link #followRider} drives both to the rider's feet every tick; see
+ * that method for why carrying them as passengers put the rug around a Bedrock viewer's neck.
+ * Neither is ever given a velocity: falling-block velocity does not move on Bedrock at all
+ * (Geyser#5655, closed "Can't Fix").
  */
 public final class CarpetVisual {
 
@@ -62,13 +64,14 @@ public final class CarpetVisual {
     private static final float TRANSLATE_X = -0.5f;
 
     /**
-     * Y translation correcting the passenger attachment offset (design doc §4): the mount's
-     * passenger attachment is index-clamped rather than per-seat, so the rider lands at
-     * {@code P - (0, 0.6, 0)} (the player's own vehicle attachment) while the display lands at
-     * {@code P}, putting the carpet at the rider's waist without this correction. This value
-     * needs in-game calibration - it is a starting estimate, not a measured constant.
+     * Y translation of the Java display.
+     *
+     * <p>Zero: {@link #followRider} teleports the visual straight to the rider's feet, so there
+     * is no passenger attachment offset left to cancel out. This was {@code -0.6f}, described in
+     * its own Javadoc as "a starting estimate, not a measured constant" — an unverifiable number
+     * that only ever existed to undo an offset the visual no longer inherits.
      */
-    private static final float TRANSLATE_Y = -0.6f;
+    private static final float TRANSLATE_Y = 0f;
 
     private static final float TRANSLATE_Z = -0.5f;
 
@@ -81,9 +84,11 @@ public final class CarpetVisual {
     private final FallingBlock bedrockVisual;
 
     /**
-     * Spawns both visuals at the mount's current location and attaches them to it as
-     * passengers. {@code mount} must already be spawned in the world; this constructor does
-     * not create it.
+     * Spawns both visuals at {@code mount}'s current location. {@code mount} must already be
+     * spawned in the world; this constructor does not create it, and the visuals are not
+     * attached to it — {@link #followRider} drives them from then on. {@code mount} is used only
+     * as the initial placement, so the carpet appears in the right place on the deploy tick
+     * rather than at the world origin for one frame.
      */
     public CarpetVisual(Plugin plugin, EditionResolver editionResolver, Entity mount) {
         this.plugin = plugin;
@@ -95,8 +100,6 @@ public final class CarpetVisual {
         try {
             java = spawnJavaVisual(location);
             bedrock = spawnBedrockVisual(location);
-            attachPassenger(mount, java);
-            attachPassenger(mount, bedrock);
         } catch (RuntimeException e) {
             // Partial construction failed: despawn whatever was already spawned before
             // rethrowing, so the caller never has to reason about an orphaned entity.
@@ -110,16 +113,36 @@ public final class CarpetVisual {
     }
 
     /**
-     * Attaches {@code passenger} to {@code mount}, treating a {@code false} return (Bukkit's
-     * signal for a rejected attach, as opposed to a thrown exception) as a construction failure
-     * of the same kind - it is converted into an exception so the constructor's single catch
-     * block handles both failure modes identically.
+     * Moves both visuals to {@code feet} — the rider's own location, which is their feet.
+     * Called every tick by {@code CarpetManager.tickSession}.
+     *
+     * <h2>Why the visuals are driven, not carried</h2>
+     *
+     * <p>Both visuals used to ride the mount as passengers. That is why a Bedrock player saw the
+     * rug around a Java rider's neck: a passenger sits at the vehicle's attachment point, which
+     * is roughly chest height, and only the {@link BlockDisplay} had a correction for it — a
+     * {@code TRANSLATE_Y} of {@code -0.6} that its own Javadoc admitted was an uncalibrated
+     * estimate. A {@link FallingBlock} has no transformation to correct with, so the Bedrock
+     * stand-in got no correction at all.
+     *
+     * <p>Driving both to the rider's location instead removes the attachment offset from the
+     * problem entirely rather than trying to cancel it out. Both editions now render from the
+     * same coordinate, so they cannot disagree, and there is no longer a guessed constant that
+     * only a play-test could validate. {@code TRANSLATE_Y} is consequently {@code 0}.
+     *
+     * <p>Smoothness is preserved by {@code setTeleportDuration(1)} on the display (see {@link
+     * #spawnJavaVisual}), which interpolates between per-tick teleports the way riding a vehicle
+     * used to. Never uses velocity: a {@link FallingBlock}'s velocity does not move it on Bedrock
+     * at all (Geyser#5655, closed "Can't Fix").
+     *
+     * <p>A no-op once either visual is dead, so a teardown racing the tick loop cannot throw.
      */
-    private static void attachPassenger(Entity mount, Entity passenger) {
-        if (!mount.addPassenger(passenger)) {
-            throw new IllegalStateException(
-                    "Mount " + mount.getUniqueId() + " rejected passenger " + passenger.getUniqueId());
+    public void followRider(Location feet) {
+        if (javaVisual.isDead() || bedrockVisual.isDead()) {
+            return;
         }
+        javaVisual.teleport(feet);
+        bedrockVisual.teleport(feet);
     }
 
     private static BlockDisplay spawnJavaVisual(Location location) {
@@ -134,6 +157,9 @@ public final class CarpetVisual {
             entity.setDisplayHeight(0f);
             entity.setBrightness(FULL_BRIGHTNESS);
             entity.setBillboard(Display.Billboard.FIXED);
+            // Interpolate between the per-tick teleports in followRider, so the carpet glides
+            // instead of stepping. One tick matches the tick cadence that drives it.
+            entity.setTeleportDuration(1);
             applyCommonVisualConfig(entity);
         });
     }

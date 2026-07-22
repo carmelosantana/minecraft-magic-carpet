@@ -40,7 +40,7 @@ public record MagicCarpetConfig(
         boolean effectsParticles,
         boolean effectsSound) {
 
-    private static final FlightModeKind DEFAULT_JAVA_MODE = FlightModeKind.SEATED;
+    private static final FlightModeKind DEFAULT_JAVA_MODE = FlightModeKind.STANDING;
     private static final FlightModeKind DEFAULT_BEDROCK_MODE = FlightModeKind.STANDING;
     private static final double DEFAULT_FLIGHT_SPEED = 0.5;
     private static final double MIN_FLIGHT_SPEED = 0.05;

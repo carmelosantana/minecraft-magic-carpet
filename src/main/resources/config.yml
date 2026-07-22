@@ -1,13 +1,24 @@
 # Flight behaviour: movement mode per client platform, speed, and altitude ceiling.
 flight:
   # Rider stance for Java Edition players: 'seated' or 'standing'.
-  java-mode: seated
+  #
+  # Defaulted to 'standing' as of v0.1.1. 'seated' renders the nicer pose, but it makes the
+  # rider a PASSENGER of an invisible mount, and that one fact caused every serious bug found
+  # in v0.1.0: the server has to drive movement by teleport (raw teleports do not collide, so
+  # riders suffocated inside terrain), a passenger's own ground flag never becomes true (so
+  # landing never stowed the carpet), and dismounts have to be cancelled to stop sneak
+  # ejecting the rider mid-air. 'standing' has none of that - the player flies themselves with
+  # real collision. 'seated' is still fully supported; set it here if you want the pose back
+  # and can live with the trade-offs above.
+  java-mode: standing
   # Rider stance for Bedrock/Geyser players: 'seated' or 'standing'.
   bedrock-mode: standing
   # Horizontal flight speed in blocks per tick. Range: 0.05-2.0.
-  # Applies to 'seated' mode ONLY. 'standing' mode (the Bedrock default below) uses the
-  # client's own native flight and ignores this value entirely; there is currently no setting
-  # that changes standing-mode speed.
+  # Applies to 'seated' mode ONLY. 'standing' mode - now the default for both editions - uses
+  # the client's own native flight and ignores this value entirely. There is deliberately no
+  # setting that changes standing-mode speed: Player#setFlySpeed takes an abstract 0.0-1.0
+  # scale, not blocks per tick, and a guessed conversion between the two would be worse than
+  # documenting the gap.
   speed: 0.5
   # Maximum altitude the carpet may climb to, in blocks above terrain. Range: 8-320.
   altitude-ceiling: 64
