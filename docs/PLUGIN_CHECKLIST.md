@@ -257,10 +257,33 @@ now fails at gate 6. **7b (full-roster matrix) is out-of-band and is not require
 plugin's release** — it is triggered by an updater manifest change or a
 Paper/Geyser/Floodgate/ViaVersion bump, not by a `dev` run.
 
-- [ ] Fresh-volume [Legendary Java Minecraft Geyser Floodgate stack](https://github.com/TheRemote/Legendary-Java-Minecraft-Geyser-Floodgate) test covers every updater-managed plugin.
-      **7b — out-of-band, not required for this release.**
-- [ ] Each updater-managed plugin's manifest `enabled` value, default state, and expected fresh-volume behavior are recorded separately.
-      **7b — out-of-band.** Magic Carpet is not yet enrolled in the updater (gate 10).
+- [x] Fresh-volume [Legendary Java Minecraft Geyser Floodgate stack](https://github.com/TheRemote/Legendary-Java-Minecraft-Geyser-Floodgate) test covers every updater-managed plugin.
+      **7b run 2026-07-21, triggered by this plugin's own enrolment.** Fresh volume, roster
+      installed from published release assets. `MATRIX PASSED: 13/13 expectation(s) met.`
+      RCON reported **16 plugins, all green**: the 13 updater-managed plus `floodgate`,
+      `Geyser-Spigot` and `ViaVersion`. `Done (17.381s)`, Java port served a real handshake
+      (`Paper 26.1.2 | protocol 775`). Every plugin logged exactly one `Enabling` line; zero
+      `Could not load`, `InvalidDescriptionException`, `InvalidPluginException`, `Error
+      occurred while enabling`, or `Caused by` anywhere in the log. Secrets scan of the full
+      log: 0 matches. Stack torn down cleanly, no leaked container or lease.
+- [x] Each updater-managed plugin's manifest `enabled` value, default state, and expected fresh-volume behavior are recorded separately.
+      All 13 manifest entries omit `enabled` (absent = `true`), so every one's expected
+      fresh-volume behaviour is *install and enable* — there are no disabled entries whose
+      intentional absence needed verifying this run. Observed, from the updater's own output:
+      Agua de Florida v2.0.0, Copper Kingdom v0.2.1, Curse v0.2.2, Death Depot v1.1.1,
+      Electric Furnace v0.2.1, Gluten Free Bread v1.1.3, **Magic Carpet v0.1.0**, Ollama
+      v0.2.1, Starter Pack v1.1.2, Timber Blast v1.0.0, Umami v1.1.1, Wild Weather Update
+      v1.0.2, WorldCRUD v1.1.2 — all `installed`, then `all managed plugins are current`.
+      Per-plugin warnings: **only Magic Carpet emitted one** — the expected WorldGuard-absent
+      fail-open (`Could not register the magic-carpet-flight WorldGuard flag`). The other 12
+      logged zero warnings and zero errors.
+
+**Manifest vs. inventory note.** At run time `plugins.json` held 13 entries while the
+toolkit's `CURRENT_STATE.md` roster listed 12, missing Magic Carpet. That divergence was
+created by this plugin's own gate 10 enrolment minutes earlier and is closed by
+`minecraft-plugin-handoff` at gate 12; the documented batched tail is
+`updater → matrix → deploy → handoff`, so the matrix always runs before that refresh. The
+run tested the live manifest's full 13, since that is what the updater actually installs.
 - [x] Paper, Geyser, Floodgate, and ViaVersion start successfully together.
       Fresh-volume disposable stack, `Done (19.322s)`, Java port served a real Minecraft
       handshake (`Paper 26.1.2 | protocol 775`). RCON `plugins` reported 4 plugins, **all green
@@ -281,7 +304,17 @@ Paper/Geyser/Floodgate/ViaVersion bump, not by a `dev` run.
       than assumed. No exceptions from `org.xpfarm` code. Stack torn down cleanly, no leaked
       containers or slot lease.
 - [x] Ollama and Umami unavailable-endpoint tests keep the server and plugins available when applicable.
-      Not applicable — no external services.
+      Not applicable to Magic Carpet itself (no external services). Exercised across the roster
+      at 7b regardless: both Ollama and Umami enabled with no endpoint configured — their
+      disabled-by-default state — with zero warnings, zero errors, and the server and all 16
+      plugins staying available.
+
+**Stack-wide 7b results.** Paper, Geyser, Floodgate and ViaVersion started together (verified
+from the startup log, not container status). `play.xpfarm.org` reachability confirmed
+read-only against production: DNS `168.231.74.113`, Java `25565/tcp` reachable, Bedrock
+`19132/udp` answered a RakNet pong (207 bytes). **A failing row here would be
+ecosystem-coherence evidence for gate 12, not a reason to revert a shipped plugin — nothing
+failed.**
 
 ### Gate 7a runtime obligations
 
