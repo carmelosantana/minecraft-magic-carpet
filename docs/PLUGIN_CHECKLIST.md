@@ -365,10 +365,43 @@ in play was settled. Items 1–13 are the gate 12 play-test obligation.
 
 ## 10. Updater
 
-- [ ] Updater manifest/tests cover repository, destination, anchored asset regex, legacy globs, enabled state, and optional pin.
-- [ ] Fresh install, upgrade, no-op, legacy archival, endpoint failure, and checksum failure behaviors pass.
-- [ ] Updater dry-run uses a disposable directory and never a production plugin directory.
-- [ ] Failure retains the installed JAR and default fail-open behavior permits Minecraft startup.
+- [x] Updater manifest/tests cover repository, destination, anchored asset regex, legacy globs, enabled state, and optional pin.
+      Manifest entry in `carmelosantana/minecraft-plugin-updater` commit
+      [0f77c0a](https://github.com/carmelosantana/minecraft-plugin-updater/commit/0f77c0a),
+      inserted alphabetically (1-line diff):
+      `{"name": "Magic Carpet", "repo": "carmelosantana/minecraft-magic-carpet", "destination": "magic-carpet.jar", "asset_regex": "^magic-carpet-[0-9].*\\.jar$", "legacy_globs": ["magic-carpet-[0-9]*.jar"]}`
+      No `enabled` key (absent = `true`, matching all 12 sibling entries) and **no pin** —
+      it follows the latest non-prerelease release. `destination` is unique across all 13
+      entries (checked programmatically). `python3 -m json.tool` clean; `python3 -m unittest
+      discover -s tests` 11/11 pass. The `asset_regex` was verified **against the real v0.1.0
+      release assets**: it selects exactly one JAR, and adversarial probes confirmed it rejects
+      `original-magic-carpet-0.1.0.jar`, `magic-carpet-sources.jar`, another plugin's
+      `timber-blast-1.0.0.jar`, and the bare destination `magic-carpet.jar`.
+- [x] Fresh install, upgrade, no-op, legacy archival, endpoint failure, and checksum failure behaviors pass.
+      **Fresh install**: `Magic Carpet: would install v0.1.0`.
+      **Real install**: `installed v0.1.0`, 67780 bytes matching the release asset.
+      **No-op**: second invocation reported `already current (v0.1.0)` — reached via the real
+      install-then-repeat sequence, since `--dry-run` alone can never produce it.
+      **Upgrade/replacement**: a stale 20-byte JAR at the destination was backed up to
+      `magic-carpet.jar.<ts>.bak` and replaced with the real release.
+      **Legacy archival**: a seeded `magic-carpet-0.0.9.jar` was moved out of the plugins
+      directory to `magic-carpet-0.0.9.jar.<ts>.legacy.bak` — observed via a real install, as
+      dry-run mode never reports archival.
+      **Endpoint failure**: a manifest pointing Magic Carpet at a nonexistent repo produced
+      `completed with 1 warning(s)`, exit `0`; the other 12 plugins continued normally.
+      **Checksum failure**: covered by `tests/test_updater.py::test_bad_checksum_preserves_installed_jar`,
+      which mocks a mismatched `SHA256SUMS` and asserts both that `UpdateError` is raised and
+      that the previously installed JAR's bytes are unchanged. Passed.
+- [x] Updater dry-run uses a disposable directory and never a production plugin directory.
+      All runs targeted `/tmp/minecraft-plugin-updater-dry-run`. The non-dry-run invocations
+      required by the no-op and archival checks overrode **all three** paths — `--plugins-dir`,
+      `--state-file` and `--backup-dir` — inside that sandbox, so none fell through to their
+      `/minecraft/...` production defaults. The whole tree was discarded afterward.
+- [x] Failure retains the installed JAR and default fail-open behavior permits Minecraft startup.
+      Verified by sha256: the installed `magic-carpet.jar` was byte-identical before and after
+      the unreachable-endpoint run (`3e3ac29c71ff342e…`). The run exited `0` without
+      `--strict`, so a plugin-level failure warns and continues rather than aborting the batch
+      — it cannot block Minecraft startup.
 
 ## 11. Deployment
 
