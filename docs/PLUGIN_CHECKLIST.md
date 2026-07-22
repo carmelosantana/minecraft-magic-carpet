@@ -396,6 +396,38 @@ in play was settled. Items 1–13 are the gate 12 play-test obligation.
       `MagicCarpet` / `0.1.0` / `api-version '26.1'` / the `carpet` command / all three
       permission nodes.
 
+### v0.1.1 — 2026-07-22
+
+Bug-fix release for the two Java field reports and the five Bedrock/Java reports that followed.
+Same evidence bar as v0.1.0 above; all four boxes hold again for this version.
+
+- Version: `pom.xml` `0.1.1`; embedded descriptor resolves to `version: '0.1.1'`. Tag `v0.1.1`,
+  annotated, on commit `65e19bb`. `git tag --list v0.1.1` was empty beforehand; worktree clean,
+  no divergence from `origin/main`; main-branch run
+  [29945734536](https://github.com/carmelosantana/minecraft-magic-carpet/actions/runs/29945734536)
+  was a completed success on that exact commit *before* the tag was pushed.
+- Tag run [29945810429](https://github.com/carmelosantana/minecraft-magic-carpet/actions/runs/29945810429)
+  — success. Release [v0.1.1](https://github.com/carmelosantana/minecraft-magic-carpet/releases/tag/v0.1.1),
+  `draft=false`, `prerelease=false`, created by `github-actions[bot]`.
+- Assets: exactly `magic-carpet-0.1.1.jar` + `SHA256SUMS.txt`, zero `original-*`.
+- `sha256sum --check`: `magic-carpet-0.1.1.jar: OK`, exit 0.
+- Updater: no manifest change needed. The `Magic Carpet` entry in `plugins.json` carries no
+  `pin`, so it follows the latest non-prerelease release and picks up v0.1.1 on the next run.
+
+**What is in it:** deploy from either hand via `PlayerInputEvent` (Bedrock could not fly at all
+before, and Java could not fly from the main hand); `standing` is now the default flight mode for
+both editions; rider-hitbox collision replacing a single-block sample (suffocation); geometric
+landing detection replacing `player.isOnGround()` (the carpet never stowed); suffocation exempt
+from `combat.drop-on-damage`; both visuals driven to the rider's feet rather than carried as
+passengers, at 1x1 on both editions.
+
+**Not verified in play.** Every change in v0.1.1 is verified by unit tests, source reading of
+Geyser and Paper, and gate 7a — and by nothing else. No client has attached to any stack at any
+point in this plugin's life, so nothing in this release has been observed to actually work. The
+visual changes are the least verified: their whole purpose is what a player sees. This release
+exists to be play-tested, not because it is known good. See
+`docs/field-reports/2026-07-22-java-player-v0.1.0.md` for the test script.
+
 ## 10. Updater
 
 - [x] Updater manifest/tests cover repository, destination, anchored asset regex, legacy globs, enabled state, and optional pin.
