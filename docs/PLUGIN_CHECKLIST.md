@@ -330,18 +330,38 @@ in play was settled. Items 1–13 are the gate 12 play-test obligation.
       `.github/workflows/build.yml` copied verbatim; `diff` against `timber-blast`,
       `electric-furnace`, `wild-weather-update` and `curse` reports byte-identical. Includes the
       bare-filename `SHA256SUMS.txt` generation required by `GITHUB_ACTIONS.md`.
-- [ ] Successful main Actions run is recorded before tagging.
-      Cannot run: the GitHub repository does not exist yet (see §2). This box belongs to
-      `minecraft-plugin-release` regardless.
+- [x] Successful main Actions run is recorded before tagging.
+      Run [29878766771](https://github.com/carmelosantana/minecraft-magic-carpet/actions/runs/29878766771)
+      — `completed` / `success`, 21s, commit `434ff10`. Its `headSha` was confirmed identical to
+      local `HEAD` before tagging, so `v0.1.0` sits on the exact commit CI validated. No run was
+      in flight at tag time.
 - [x] Workflow permissions contain no broader access than the documented contract.
       `permissions: contents: write` only.
 
 ## 9. Release
 
-- [ ] Semantic version matches the POM, plugin metadata, and `v<version>` tag.
-- [ ] Successful tag Actions run and GitHub release are recorded.
-- [ ] Release contains exactly one updater-matching JAR plus `SHA256SUMS.txt` and no `original-*` JAR.
-- [ ] Downloaded release assets pass `sha256sum --check SHA256SUMS.txt`.
+- [x] Semantic version matches the POM, plugin metadata, and `v<version>` tag.
+      `pom.xml` `<version>0.1.0</version>`; `plugin.yml` carries the `'${project.version}'`
+      filter token rather than a hardcoded literal, so there is no drift to reconcile; the
+      released JAR's embedded descriptor resolves to `version: '0.1.0'`. Tag `v0.1.0`,
+      annotated, on commit `434ff10`. `git tag --list v0.1.0` was empty beforehand and the
+      worktree was clean with no divergence from `origin/main`.
+- [x] Successful tag Actions run and GitHub release are recorded.
+      Tag run [29878922004](https://github.com/carmelosantana/minecraft-magic-carpet/actions/runs/29878922004)
+      — success. Release
+      [v0.1.0](https://github.com/carmelosantana/minecraft-magic-carpet/releases/tag/v0.1.0),
+      published 2026-07-22T00:01:03Z by `github-actions[bot]`, `draft=false`,
+      `prerelease=false`.
+- [x] Release contains exactly one updater-matching JAR plus `SHA256SUMS.txt` and no `original-*` JAR.
+      Exactly two assets: `magic-carpet-0.1.0.jar` (67780 bytes) and `SHA256SUMS.txt`
+      (89 bytes). Zero `original-*` assets. `SHA256SUMS.txt` records the **bare** filename,
+      not a `target/`-prefixed path, per the `GITHUB_ACTIONS.md` contract.
+- [x] Downloaded release assets pass `sha256sum --check SHA256SUMS.txt`.
+      Downloaded to a scratch directory and verified: `magic-carpet-0.1.0.jar: OK`, exit 0.
+      The released JAR's embedded `plugin.yml` was additionally re-parsed as YAML to confirm
+      the descriptor fix from `3b3aafe` is what actually shipped — it parses, and declares
+      `MagicCarpet` / `0.1.0` / `api-version '26.1'` / the `carpet` command / all three
+      permission nodes.
 
 ## 10. Updater
 
