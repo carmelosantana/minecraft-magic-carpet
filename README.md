@@ -1,6 +1,6 @@
 # Magic Carpet
 
-An enchanted rug for [Paper](https://papermc.io/) servers. Carry it in your off-hand,
+An enchanted rug for [Paper](https://papermc.io/) servers. Carry it in either hand,
 jump, and it unfurls beneath you — then fly where you look until you sneak back down
 to the ground.
 
@@ -9,7 +9,9 @@ Play it on **`play.xpfarm.org`** (Java Edition and Bedrock Edition via Geyser).
 ## How it works
 
 1. Craft the rug, or receive one from `/carpet give`.
-2. Hold it in your **off-hand**. On the ground it is an ordinary held item.
+2. Hold it in **either hand** (off-hand preferred). On the ground it is an ordinary held item.
+   Bedrock clients cannot place arbitrary items in the off-hand at all, so main-hand carry is
+   the only way carpet flight is reachable for them.
 3. **Jump.** The carpet unfurls and flight begins.
 4. Steer by looking — the carpet cruises forward, and looking up or down climbs or dives.
 5. **Sneak** to lose altitude. Touching the ground stows the carpet back into your hand.

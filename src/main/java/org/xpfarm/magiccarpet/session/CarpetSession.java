@@ -12,6 +12,7 @@ package org.xpfarm.magiccarpet.session;
 import java.util.Objects;
 import java.util.UUID;
 import org.bukkit.entity.Entity;
+import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.ItemStack;
 import org.xpfarm.magiccarpet.flight.FlightMode;
 import org.xpfarm.magiccarpet.flight.FuelTank;
@@ -38,6 +39,7 @@ public final class CarpetSession {
     private final FuelTank fuelTank;
     private final int groundY;
     private final ItemStack heldRug;
+    private final EquipmentSlot rugSlot;
 
     /**
      * Whether this rider has been clear of the ground at least once since deploying — the latch
@@ -69,6 +71,9 @@ public final class CarpetSession {
      *     any durability/NBT/display-name changes the specific physical item carries survive
      *     the flight. May be an air/empty stack in the defensive case where the off-hand held
      *     nothing at deploy time; never {@code null}.
+     * @param rugSlot the hand the rug was taken from, so stowing puts it back where the player
+     *     had it. Either hand is accepted at deploy because Bedrock clients cannot place a carpet
+     *     in the off-hand at all — see {@code CarpetItem.findHeldCarpet}.
      */
     public CarpetSession(
             UUID playerId,
@@ -77,7 +82,8 @@ public final class CarpetSession {
             CarpetVisual visual,
             FuelTank fuelTank,
             int groundY,
-            ItemStack heldRug) {
+            ItemStack heldRug,
+            EquipmentSlot rugSlot) {
         this.playerId = Objects.requireNonNull(playerId, "playerId");
         this.mode = Objects.requireNonNull(mode, "mode");
         this.mount = mount;
@@ -85,6 +91,7 @@ public final class CarpetSession {
         this.fuelTank = Objects.requireNonNull(fuelTank, "fuelTank");
         this.groundY = groundY;
         this.heldRug = Objects.requireNonNull(heldRug, "heldRug");
+        this.rugSlot = Objects.requireNonNull(rugSlot, "rugSlot");
     }
 
     public UUID playerId() {
@@ -135,5 +142,10 @@ public final class CarpetSession {
      */
     public ItemStack heldRug() {
         return heldRug;
+    }
+
+    /** The hand {@link #heldRug()} was taken from, and the one it is returned to on stow. */
+    public EquipmentSlot rugSlot() {
+        return rugSlot;
     }
 }

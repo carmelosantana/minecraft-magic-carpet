@@ -29,6 +29,7 @@ import org.bukkit.Sound;
 import org.bukkit.World;
 import org.bukkit.entity.Entity;
 import org.bukkit.entity.Player;
+import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.plugin.Plugin;
 import org.xpfarm.magiccarpet.config.FlightModeKind;
@@ -281,11 +282,20 @@ public final class CarpetManager {
         // used if the slot is somehow already empty rather than assuming a carpet is there.
         // Never re-synthesizes a new CarpetItem.create() here or on dismiss: see
         // returnRug/peekHeldRug for why fabricating a replacement is exactly the bug this fixes.
-        ItemStack heldRug = player.getInventory().getItemInOffHand().clone();
-        player.getInventory().setItemInOffHand(new ItemStack(Material.AIR));
+        EquipmentSlot rugSlot = CarpetItem.findHeldCarpet(player.getInventory());
+        ItemStack heldRug;
+        if (rugSlot == null) {
+            // Defensive: no carpet in either hand. Record an empty stack so nothing is fabricated
+            // on stow, and an arbitrary slot so the session's invariants still hold.
+            rugSlot = EquipmentSlot.OFF_HAND;
+            heldRug = new ItemStack(Material.AIR);
+        } else {
+            heldRug = player.getInventory().getItem(rugSlot).clone();
+            player.getInventory().setItem(rugSlot, new ItemStack(Material.AIR));
+        }
 
-        CarpetSession session =
-                new CarpetSession(id, mode, mount, visual, fuelTank, at.getBlockY(), heldRug);
+        CarpetSession session = new CarpetSession(
+                id, mode, mount, visual, fuelTank, at.getBlockY(), heldRug, rugSlot);
         sessions.put(id, session);
 
         if (world != null) {
@@ -500,9 +510,12 @@ public final class CarpetManager {
             return; // CarpetListeners.onPlayerDeath handles this cause itself; see method doc.
         }
         try {
-            ItemStack offHand = player.getInventory().getItemInOffHand();
-            if (offHand == null || offHand.getType() == Material.AIR) {
-                player.getInventory().setItemInOffHand(rug);
+            // Back to the hand it came from, so a Bedrock player who flew from the main hand does
+            // not get it returned to an off-hand slot their client cannot show them.
+            EquipmentSlot slot = session.rugSlot();
+            ItemStack occupant = player.getInventory().getItem(slot);
+            if (occupant == null || occupant.getType() == Material.AIR) {
+                player.getInventory().setItem(slot, rug);
             } else {
                 dropRugAtFeet(player, rug);
             }
@@ -547,6 +560,20 @@ public final class CarpetManager {
             return null;
         }
         return rug.clone();
+    }
+
+    /**
+     * The hand {@code player}'s in-flight rug was taken from, or {@code null} if they have no
+     * active session. Companion to {@link #peekHeldRug}, for {@code CarpetListeners.onPlayerDeath}
+     * — it writes the rug back itself on a keep-inventory death and must put it in the same hand
+     * {@link #returnRug} would have used, rather than assuming the off-hand.
+     */
+    public EquipmentSlot peekHeldRugSlot(Player player) {
+        if (player == null) {
+            return null;
+        }
+        CarpetSession session = sessions.get(player.getUniqueId());
+        return session == null ? null : session.rugSlot();
     }
 
     /**

@@ -9,7 +9,6 @@
  */
 package org.xpfarm.magiccarpet.listener;
 
-import com.destroystokyo.paper.event.player.PlayerJumpEvent;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
@@ -26,11 +25,14 @@ import org.bukkit.event.entity.EntityDamageEvent;
 import org.bukkit.event.entity.EntityDismountEvent;
 import org.bukkit.event.entity.PlayerDeathEvent;
 import org.bukkit.event.inventory.PrepareItemCraftEvent;
+import org.bukkit.event.player.PlayerInputEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.event.world.ChunkUnloadEvent;
+import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.Recipe;
 import org.xpfarm.magiccarpet.config.MagicCarpetConfig;
+import org.xpfarm.magiccarpet.flight.RiderClearance;
 import org.xpfarm.magiccarpet.item.CarpetItem;
 import org.xpfarm.magiccarpet.session.CarpetManager;
 
@@ -60,6 +62,7 @@ public final class CarpetListeners implements Listener {
 
     private final CarpetManager carpetManager;
     private final CombatGraceTracker combatGrace = new CombatGraceTracker();
+    private final JumpPressTracker jumpPresses = new JumpPressTracker();
 
     private volatile MagicCarpetConfig config;
 
@@ -82,23 +85,47 @@ public final class CarpetListeners implements Listener {
     }
 
     /**
-     * Deploy trigger. Off-hand only, exactly as specified — a carpet held in the main hand must
-     * not deploy on jump. Checks are ordered cheapest-and-most-likely-to-reject first, since
-     * this fires on every jump of every player on the server, not just carpet users: an already
-     * flying rider or a mid-grace-cooldown rider (map lookups) are rejected before the
-     * permission check, which is rejected before the off-hand item inspection (the only check
-     * that touches item meta/PDC).
+     * Deploy trigger: pressing jump while standing on the ground holding a carpet in either hand.
      *
-     * <p>Every rejection here is silent — no message is sent. A player jumping without holding
-     * a permitted carpet is just an ordinary jump; sending "no permission" or "still on
-     * cooldown" on literally every jump they take would be constant spam. {@link
-     * CarpetManager#deploy} still sends its own denial messages (world/region/permission) for
-     * the cases that {@code do} reach it, since those are the direct result of the player
-     * deliberately holding a carpet and jumping to use it.
+     * <p><strong>Why {@code PlayerInputEvent} rather than {@code PlayerJumpEvent}.</strong> The
+     * original trigger was Paper's {@code PlayerJumpEvent}, and Bedrock players could not fly at
+     * all. That event is derived from player <em>movement</em> — it carries a from/to {@link
+     * org.bukkit.Location} pair — and nothing establishes that Geyser's movement translation
+     * produces the pattern Paper's jump detection looks for. {@code PlayerInputEvent} is backed by
+     * {@code ServerboundPlayerInputPacket}, which Geyser fills in explicitly for every Bedrock
+     * client (see {@link JumpPressTracker} for the exact call), so this trigger works for both
+     * editions by construction instead of by hoping a heuristic carries over.
+     *
+     * <p>Two consequences of the swap, both handled here rather than left implicit:
+     *
+     * <ul>
+     *   <li>{@code Input#isJump()} is a held state, not a press, so {@link JumpPressTracker}
+     *       converts it to an edge. It is updated on <em>every</em> event, before any rejection,
+     *       or the recorded state would go stale.
+     *   <li>{@code PlayerJumpEvent} implied the player was leaving the ground; a jump keypress
+     *       does not. Ground contact is now checked explicitly via {@link
+     *       RiderClearance#isGrounded}, which keeps the documented "deploys from the ground"
+     *       behaviour and stops a mid-air keypress from deploying.
+     * </ul>
+     *
+     * <p>Checks are ordered cheapest-and-most-likely-to-reject first, since this fires on every
+     * input change of every player on the server, not just carpet users: the press edge rejects
+     * the overwhelming majority (WASD changes carry no jump transition) before any map lookup,
+     * and the item inspection that touches meta/PDC is last.
+     *
+     * <p>Every rejection here is silent — no message is sent. A player jumping without holding a
+     * permitted carpet is just an ordinary jump; sending "no permission" or "still on cooldown" on
+     * literally every jump they take would be constant spam. {@link CarpetManager#deploy} still
+     * sends its own denial messages (world/region/permission) for the cases that {@code do} reach
+     * it, since those are the direct result of the player deliberately holding a carpet and
+     * jumping to use it.
      */
-    @EventHandler(ignoreCancelled = true)
-    public void onPlayerJump(PlayerJumpEvent event) {
+    @EventHandler
+    public void onPlayerInput(PlayerInputEvent event) {
         Player player = event.getPlayer();
+        if (!jumpPresses.isPress(player.getUniqueId(), event.getInput().isJump())) {
+            return;
+        }
         if (carpetManager.hasActiveSession(player)) {
             return;
         }
@@ -108,8 +135,10 @@ public final class CarpetListeners implements Listener {
         if (!player.hasPermission(USE_PERMISSION)) {
             return;
         }
-        ItemStack offHand = player.getInventory().getItemInOffHand();
-        if (!CarpetItem.isCarpet(offHand)) {
+        if (!RiderClearance.isGrounded(player)) {
+            return;
+        }
+        if (CarpetItem.findHeldCarpet(player.getInventory()) == null) {
             return;
         }
         carpetManager.deploy(player);
@@ -193,6 +222,7 @@ public final class CarpetListeners implements Listener {
         carpetManager.dismiss(player, CarpetManager.DismissCause.QUIT);
         carpetManager.clearFuelTank(player);
         combatGrace.clear(player.getUniqueId());
+        jumpPresses.clear(player.getUniqueId());
     }
 
     /**
@@ -220,12 +250,13 @@ public final class CarpetListeners implements Listener {
             return;
         }
         ItemStack heldRug = carpetManager.peekHeldRug(player);
+        EquipmentSlot rugSlot = carpetManager.peekHeldRugSlot(player);
         carpetManager.dismiss(player, CarpetManager.DismissCause.DEATH);
-        if (heldRug == null) {
+        if (heldRug == null || rugSlot == null) {
             return;
         }
         if (event.getKeepInventory()) {
-            player.getInventory().setItemInOffHand(heldRug);
+            player.getInventory().setItem(rugSlot, heldRug);
         } else {
             event.getDrops().add(heldRug);
         }

@@ -4,7 +4,7 @@ main: org.xpfarm.magiccarpet.MagicCarpetPlugin
 api-version: '26.1'
 author: Carmelo Santana
 website: https://xpfarm.org
-description: 'Enchanted rug carried in the off-hand: jump to unfurl it, fly where you look, sneak back down to stow it'
+description: 'Enchanted rug carried in either hand: jump to unfurl it, fly where you look, sneak back down to stow it'
 
 softdepend: [WorldGuard, floodgate]
 

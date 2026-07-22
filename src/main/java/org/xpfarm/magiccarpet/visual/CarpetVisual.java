@@ -44,8 +44,20 @@ public final class CarpetVisual {
     /** Scoreboard tag applied to both visual entities, matching the mount's tag for orphan sweeps. */
     public static final String VISUAL_TAG = "magiccarpet";
 
-    /** Horizontal scale of the Java {@link BlockDisplay}; the Y scale stays 1 so it stays carpet-thin. */
-    public static final float CARPET_SCALE = 3.0f;
+    /**
+     * Horizontal scale of the Java {@link BlockDisplay}; the Y scale stays 1 so it stays
+     * carpet-thin.
+     *
+     * <p>Was {@code 3.0f}. Reduced to {@code 1.0f} so both editions render the same size: the
+     * Bedrock stand-in is a {@link FallingBlock}, which cannot be scaled at all, so a 3x Java
+     * carpet meant Bedrock players saw a rug a third the size of the one Java players saw.
+     *
+     * <p>It also fixes the centring. A {@link BlockDisplay} renders its block from the origin
+     * corner outward, so {@link #TRANSLATE_X}/{@link #TRANSLATE_Z} of {@code -0.5} centre a
+     * 1x1 carpet exactly — but left a 3x one spanning {@code -0.5} to {@code 2.5}, centred a
+     * full block away from the rider it was supposed to be under.
+     */
+    public static final float CARPET_SCALE = 1.0f;
 
     private static final float TRANSLATE_X = -0.5f;
 

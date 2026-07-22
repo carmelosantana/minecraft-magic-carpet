@@ -30,7 +30,7 @@ Full design: [docs/superpowers/specs/2026-07-21-magic-carpet-design.md](superpow
 - [x] Purpose, commands, events, permissions, configuration, persistence, and acceptance checks are defined.
 - [x] Known limitations and any intentionally withheld gates are recorded.
 
-**Player-facing purpose.** An enchanted rug carried in the off-hand. Jump while
+**Player-facing purpose.** An enchanted rug carried in either hand. Jump while
 holding it and a carpet materialises underfoot; the player flies where they look
 until they sneak back to the ground, where the rug returns to their hand. Other
 players see them riding it.
